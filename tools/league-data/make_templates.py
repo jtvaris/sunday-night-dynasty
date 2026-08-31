@@ -2718,7 +2718,7 @@ def build_templates(raw: dict, log: list):
         # which is all the importer needs.
         for plist in (dev_players, pub_players):
             for pl in plist:
-                pl["contractYears"] = template_contract_years(pl["id"], pl["yearsPro"])
+                pl["contractYearsRemaining"] = template_contract_years(pl["id"], pl["yearsPro"])
 
         # Depth order is re-derived from the ratings for BOTH profiles, so the
         # importer never has to trust the raw one-season volume ranking.
@@ -2850,7 +2850,7 @@ REQUIRED_PLAYER_KEYS = {
     "college", "draftYear", "draftRound", "draftPick", "fuzzedPick", "heightIn",
     "weightLb", "ratingTarget", "areaHints", "potential", "roleHint",
     "depthRankHint", "role", "depthRank", "careerArc", "statLines", "notes",
-    "faceID", "contractYears",
+    "faceID", "contractYearsRemaining",
 }
 REQUIRED_TEAM_KEYS = {"identity", "record2025", "conference", "division",
                       "baseDefense", "picks2026", "staff", "players"}
@@ -3389,21 +3389,22 @@ def run_gates(dev, pub, ctx, log):
     contract_lines = []
     for label, doc in (("dev", dev), ("publish", pub)):
         rows = [p for t in doc["teams"] for p in t["players"]]
-        missing = [p["name"] for p in rows if not isinstance(p.get("contractYears"), int)]
+        missing = [p["name"] for p in rows if not isinstance(p.get("contractYearsRemaining"), int)]
         if missing:
-            contract_err.append(f"{label}: {len(missing)} rows without contractYears ({missing[:3]})")
+            contract_err.append(f"{label}: {len(missing)} rows without contractYearsRemaining ({missing[:3]})")
             continue
         out_of_band = []
         for p in rows:
             lo, hi = contract_years_band(p["yearsPro"])
-            if not lo <= p["contractYears"] <= hi:
-                out_of_band.append(f"{p['name']} yp{p['yearsPro']}={p['contractYears']} not in {lo}-{hi}")
+            if not lo <= p["contractYearsRemaining"] <= hi:
+                out_of_band.append(
+                    f"{p['name']} yp{p['yearsPro']}={p['contractYearsRemaining']} not in {lo}-{hi}")
         if out_of_band:
             contract_err.append(f"{label}: {len(out_of_band)} out of band ({out_of_band[:3]})")
         hist = defaultdict(int)
         for p in rows:
-            hist[p["contractYears"]] += 1
-        expiring = [p for p in rows if p["contractYears"] <= 1]
+            hist[p["contractYearsRemaining"]] += 1
+        expiring = [p for p in rows if p["contractYearsRemaining"] <= 1]
         star_expiring = [p for p in expiring if p["ratingTarget"] >= 80]
         contract_lines.append(
             f"{label} {len(rows)} rows, years "
@@ -3553,7 +3554,7 @@ def write_qa_report(path, dev, pub, ctx, gates, log):
       "In the publish file this is the ONLY career record that ships.")
     A("")
 
-    A("`contractYears` is the value `LeagueGenerator.realisticContractYears` "
+    A("`contractYearsRemaining` is the value `LeagueGenerator.realisticContractYears` "
       "hands this row at import, replayed here rather than invented: the seed is "
       "`globalSeed + entitySeed(id) + contractSeedOffset` and the branch is the "
       "row's own `yearsPro` (0-2 pro → 3-4 years, 3-6 → 2-4, 7+ → 1-2). Baking it "
@@ -3563,8 +3564,10 @@ def write_qa_report(path, dev, pub, ctx, gates, log):
       "baked one. What it changes is who can READ it: before this field, a "
       "template player's contract existed only after a career had been created, "
       "so the pre-career team picker could not tell a prospective club's "
-      "expiring stars from its signed ones. Gate 20 re-measures the bands and "
-      "reports the expiring population.")
+      "expiring stars from its signed ones. It still does not: no screen reads "
+      "the field yet (`TeamPreview` carries no contract data), so this bake "
+      "unblocks that item rather than closing it. Gate 20 re-measures the bands "
+      "and reports the expiring population.")
     A("")
 
     A("## 4. QA_REPORT carry-in conditions")

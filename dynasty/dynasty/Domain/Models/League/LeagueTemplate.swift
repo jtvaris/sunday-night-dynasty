@@ -244,9 +244,12 @@ nonisolated struct LeagueTemplate: Codable {
         /// `make_templates.py::template_contract_years` replays the importer's
         /// OWN contract sub-stream to produce it, so this is the same number
         /// `LeagueGenerator.realisticContractYears` hands the player at import,
-        /// not a second opinion. `nil` only for a template baked before this
-        /// field existed, in which case the importer's draw stands alone.
-        var contractYears: Int?
+        /// not a second opinion. Named for the `Player` property it feeds, so it
+        /// cannot be read as the length of the deal AS SIGNED — a distinction the
+        /// app draws elsewhere (`DraftRecapView.RookieDeal.years`). `nil` only
+        /// for a template baked before this field existed, in which case the
+        /// importer's draw stands alone.
+        var contractYearsRemaining: Int?
 
         /// Overall pick of record for whichever profile this row came from.
         var effectiveDraftPick: Int? { fuzzedPick ?? draftPick }

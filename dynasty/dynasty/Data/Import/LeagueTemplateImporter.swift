@@ -282,8 +282,11 @@ enum LeagueTemplateImporter {
 
         var contractRNG = SeededLeagueRandom(seed: seed &+ contractSeedOffset)
         // COUPLING — `make_templates.py::template_contract_years` replays THIS
-        // draw to bake `template.contractYears`, so a pre-career reader (the
-        // team picker) can see a club's expiring men without importing anything.
+        // draw to bake `template.contractYearsRemaining`, so a pre-career reader
+        // CAN read a club's expiring men off the template without importing
+        // anything. Nothing does yet: the team picker (TeamBrowseCatalog /
+        // TeamPreview) still carries no contract data, so TODO.md:2675 is
+        // unblocked by this field, not closed by it.
         // The draw therefore stays here even though the row now carries the
         // answer: `realisticSalary` and `initialMorale` below run on the SAME
         // sub-stream, so dropping it would re-price and re-mood every man in the
@@ -294,12 +297,14 @@ enum LeagueTemplateImporter {
             yearsPro: template.yearsPro, age: template.age, using: &contractRNG
         )
         assert(
-            template.contractYears == nil || template.contractYears == drawnContractYears,
-            "template contractYears \(String(describing: template.contractYears)) disagrees "
+            template.contractYearsRemaining == nil
+                || template.contractYearsRemaining == drawnContractYears,
+            "template contractYearsRemaining "
+            + "\(String(describing: template.contractYearsRemaining)) disagrees "
             + "with the importer's draw \(drawnContractYears) for \(template.name) — the "
             + "make_templates.py mirror has drifted from realisticContractYears"
         )
-        let contractYears = template.contractYears ?? drawnContractYears
+        let contractYears = template.contractYearsRemaining ?? drawnContractYears
 
         let (firstName, lastName) = splitName(template)
         // Built before priced, exactly as `LeagueGenerator.generatePlayer` does

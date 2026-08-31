@@ -1050,7 +1050,7 @@ enum CoachingEngine {
     /// (`generateCoach`'s `contractYearsRemaining`); it moves not one byte of
     /// the baked file, and `make_templates.py` gate 19 measures that. The owner
     /// accepted that re-baseline on 2026-08-31, to fix duplicate openers on a
-    /// 26-man candidate board.
+    /// hire board of twenty to thirty invented candidates.
     ///
     /// The draw that genuinely must not move is `generateCoach`'s FIRST — the
     /// age, which `make_templates.py::template_coach_age` replays to pick a
@@ -1073,12 +1073,14 @@ enum CoachingEngine {
         // Experience-based opening.
         //
         // Twelve variants per tier, not four. Four was a guaranteed duplicate:
-        // a coordinator search puts 26 candidates on one board, they cluster
-        // into two or three of these tiers, and by pigeonhole several men opened
-        // with the same sentence every single time. The only figure any line
-        // states is `coach.yearsExperience`, which `generateCoach` computes as
-        // `age - Int.random(in: 28...40)`; nothing here invents a win total, a
-        // title count or a job history the game does not model.
+        // a coordinator search invents 20-30 candidates for one board
+        // (`HireCoachView` draws `Int.random(in: 20...30)`, and the league's real
+        // out-of-work coaches are listed above them), they cluster into two or
+        // three of these tiers, and by pigeonhole several men opened with the
+        // same sentence every single time. The only figure any line states is
+        // `coach.yearsExperience`, which `LeagueGenerator.generateCoach` computes
+        // as `max(0, age - Int.random(in: 28...40))`; nothing here invents a win
+        // total, a title count or a job history the game does not model.
         let expOpeners: [String]
         switch coach.yearsExperience {
         case 0...5:
