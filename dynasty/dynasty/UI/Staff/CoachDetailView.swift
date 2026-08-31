@@ -134,9 +134,16 @@ struct CoachDetailView: View {
                     personalityCard
                     schemeCard
                 } trail: {
-                    // TRAIL — what he is made of, and how he sits beside the HC.
+                    // TRAIL — what he is made of, how he sits beside the HC,
+                    // and where he has actually been.
                     attributesCard
                     schemeFitCard
+                    // The real book: every completed season, club, seat and
+                    // record, off `CoachSeasonHistory`. The EXPERIENCE card on
+                    // the hire screen still derives its lines from age and
+                    // years, because a CANDIDATE the league has never finished
+                    // a season with has no rows here to show.
+                    CoachCareerHistoryCard(coach: coach)
                 }
             }
         }

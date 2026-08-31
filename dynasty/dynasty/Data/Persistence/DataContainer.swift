@@ -9,10 +9,10 @@ import Foundation
 enum DataContainer {
 
     /// The schema the binary was compiled against — always the NEWEST version.
-    static var currentSchema: Schema { Schema(versionedSchema: DynastySchemaV1.self) }
+    static var currentSchema: Schema { Schema(versionedSchema: DynastySchemaV2.self) }
 
     /// The version stamp that goes with `currentSchema`.
-    static var currentVersion: Schema.Version { DynastySchemaV1.versionIdentifier }
+    static var currentVersion: Schema.Version { DynastySchemaV2.versionIdentifier }
 
     /// Where the on-disk store lives. `ModelConfiguration` resolves SwiftData's
     /// default path (`Application Support/default.store`) without opening

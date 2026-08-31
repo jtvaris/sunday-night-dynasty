@@ -566,7 +566,7 @@ enum LeagueTemplateValidation {
             FAStorylineEvent.self, Holdout.self, TrainingPlan.self,
             WorkloadEvent.self, PositionBattle.self, RosterCut.self,
             OpponentPrepWeek.self, VoluntaryWorkout.self, HardKnocksEvent.self,
-            TradeRecord.self, TeamSeasonArchive.self,
+            TradeRecord.self, TeamSeasonArchive.self, CoachSeasonHistory.self,
         ])
         guard let container = try? ModelContainer(
             for: schema,

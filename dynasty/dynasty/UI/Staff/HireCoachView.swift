@@ -1883,9 +1883,15 @@ private struct CandidateDetailSheet: View {
         VStack(alignment: .leading, spacing: 8) {
             // "CAREER HISTORY" promised clubs, seasons and a won-lost record;
             // `careerHistoryLines` derives two summary lines from age and years
-            // in the game. Title the card what it actually holds. (The sim does
-            // not persist per-season coach history yet — when it does, this is
-            // the card that earns the old name back.)
+            // in the game. Title the card what it actually holds.
+            //
+            // The sim DOES persist per-season coach history now
+            // (`CoachSeasonHistory`, written at each rollover, rendered by
+            // `CoachCareerHistoryCard` on the coach profile) — but it starts at
+            // the first rollover after a man takes a seat, and this card is
+            // shown to CANDIDATES, most of whom the league has not finished a
+            // season with. So this stays the derived read, and keeps the name
+            // that says so; the real book lives on the profile screen.
             Text("EXPERIENCE")
                 .font(.system(size: DSType.Size.caption, weight: .black))
                 .tracking(1.5)
