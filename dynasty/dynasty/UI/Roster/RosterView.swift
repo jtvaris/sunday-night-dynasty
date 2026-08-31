@@ -1000,9 +1000,19 @@ struct RosterView: View {
     ///     else — plus the 17 yards of snap and hold its own documentation
     ///     names. It is the one place a kicker's leg is visible as the yard
     ///     line it changes rather than as a 0-99 attribute.
-    ///   * **Field goals / punts** come off `Player.seasonStatLine`, which is
-    ///     what the simulator recorded. Nothing is projected: a club that has
-    ///     not kicked yet is told it has not kicked yet.
+    ///   * **Field goals** come off `Player.seasonStatLine`, which is what the
+    ///     simulator recorded — `SeasonStatLine.add` folds `fieldGoalsMade` and
+    ///     `fieldGoalsAttempted` out of every box score. Nothing is projected: a
+    ///     club that has not kicked yet is told it has not kicked yet.
+    ///   * **Punting production is not shown at all**, because no function
+    ///     produces it in season. `PlayerGameStats` has no punting column, so
+    ///     `SeasonStatLine.add` leaves `punts` and `puntAverage` untouched
+    ///     forever; `WeekAdvancer.recordSeasonHistory` tops both up from
+    ///     `SeasonStatSynthesizer` — a table keyed on OVERALL — into the season
+    ///     history row only. `line.punts` on a live punter is therefore always
+    ///     0. What the punter DOES change is the punt itself: the net draw at
+    ///     `PlaySimulator.simulatePunt` is centred on `kickPower` and reads
+    ///     nothing else, so that attribute is what this card prints.
     @ViewBuilder
     private var kickingGameSection: some View {
         let kicker = SpecialTeamsUnitBuilder.best(.K, in: players)
@@ -1026,24 +1036,21 @@ struct RosterView: View {
                 }
 
                 if let punter {
-                    let line = punter.seasonStatLine
                     DSDetailRow("Punter", punter.fullName)
-                    DSDetailRow(
-                        "Punts",
-                        line.punts > 0
-                            ? "\(line.punts) at \(String(format: "%.1f", line.puntAverage)) avg"
-                            : "none yet",
-                        tint: line.punts > 0 ? .textPrimary : .textTertiary
-                    )
+                    if case .kicking(let attrs) = punter.positionAttributes {
+                        DSDetailRow("Punting leg", "PWR \(attrs.kickPower)", tint: .accentGold)
+                    }
                 } else {
                     DSDetailRow("Punter", "nobody on the roster", tint: .danger)
                 }
 
                 DSDetailNote(
                     text: "Longest attempt is the engine's own cutoff — it reads the kicker's leg and "
-                        + "nothing else, and the staff punts rather than try past it. The punt average "
-                        + "is a net the simulator recorded, centred on the punter's leg; neither figure "
-                        + "is a projection."
+                        + "nothing else, and the staff punts rather than try past it. Field goals are "
+                        + "the count the box score kept. Punting production is not shown because the "
+                        + "game does not record it: a box score has no punting column, so a punter's "
+                        + "punts and average are modelled from his overall only when the season is "
+                        + "filed. The leg above is the attribute every punt in the sim is centred on."
                 )
             }
             .listRowBackground(Color.backgroundSecondary)
@@ -1096,9 +1103,14 @@ struct RosterView: View {
 
                 DSDetailNote(
                     text: "An even average of the five jobs, each read on the trait that job is picked "
-                        + "on. The kicker and the punter are the halves the simulator uses today; the "
-                        + "return and coverage terms are a stand-in, because kickoff returns are rolled "
-                        + "without reading a player and no coverage unit exists to field."
+                        + "on. The kicker and the punter are the halves the simulator uses today — the "
+                        + "kicker on leg and accuracy, the punter on his leg alone, which is all a punt "
+                        + "reads. The return and coverage terms are a stand-in, because kickoff returns "
+                        + "are rolled without reading a player and no coverage unit exists to field; "
+                        + "coverage is speed, plus tackling only for the linebackers, since no other "
+                        + "room carries a tackling rating. The returner terms follow the depth chart "
+                        + "across the whole roster, so either can name a man the Return Men list above "
+                        + "did not scout."
                 )
             }
             .listRowBackground(Color.backgroundSecondary)
@@ -2122,7 +2134,13 @@ struct SpecialTeamsUnit: Identifiable {
         /// only real state any of these rows can report.
         let isListed: Bool
 
-        var id: UUID { player.id }
+        /// Role FIRST, then the man — because one man holds two jobs in the
+        /// same list more often than not. The Return Men unit is KR (ranked on
+        /// speed) concatenated with PR (ranked on agility) over the SAME WR /
+        /// RB / CB pool, and the two traits correlate, so the club's best
+        /// athlete is routinely both. Keyed on `player.id` alone, `ForEach`
+        /// saw one UUID twice and SwiftUI's diff is undefined there.
+        var id: String { "\(role)-\(player.id.uuidString)" }
     }
 }
 
@@ -2186,10 +2204,18 @@ enum SpecialTeamsUnitBuilder {
     }
 
     /// The blocking read for the wall, on each room's own attributes: pass
-    /// protection and anchor for a lineman, the tight end's blocking grade.
+    /// protection and anchor averaged for a lineman, the tight end's blocking
+    /// grade.
+    ///
+    /// The lineman's caption is PRO and deliberately NOT "PBK". PBK means
+    /// exactly `passBlock` everywhere else in the app — `PlayerRowView`'s
+    /// attribute triple, `ScoutingEngine`, `ProspectFog` — and the same man
+    /// printing two different numbers under one three-letter caption is the
+    /// caption lying, not the arithmetic. This is a different quantity, so it
+    /// gets a different name and the unit's note says what it is made of.
     static func blocking(of player: Player) -> (label: String, value: Int)? {
         switch player.positionAttributes {
-        case .offensiveLine(let a): return ("PBK", (a.passBlock + a.anchor) / 2)
+        case .offensiveLine(let a): return ("PRO", (a.passBlock + a.anchor) / 2)
         case .tightEnd(let a):      return ("BLK", a.blocking)
         default:                    return nil
         }
@@ -2259,8 +2285,17 @@ enum SpecialTeamsUnitBuilder {
 
         // Return men — ranked on the trait the depth chart's own slot ranks on
         // (`DepthChartSlot.rankingTrait`: KR speed, PR agility), and as deep as
-        // that slot goes, so this list and the chart's candidate picker cannot
-        // disagree about who the club's returners are.
+        // that slot goes.
+        //
+        // The POOL is narrower than the chart's, and deliberately: KR and PR are
+        // `acceptsAnyPosition`, so `DepthChart.reconcile` ranks the whole roster
+        // and the picker offers every player, while this list scouts `returnPool`
+        // (WR / RB / CB) only. A fast safety is a legitimate chart candidate and
+        // will not appear here unless the chart already lists him — which is why
+        // the listed man is always spliced in above, and why the header says
+        // where this list looked. Same reason the Unit Rating's returner term can
+        // name a man who is not in this section: its fallback follows `reconcile`
+        // across the whole roster, not this pool.
         let kickReturners = returners(
             pool: returnCandidates, roster: active, trait: .speed,
             depth: DepthChartSlot.KR.maxDepth, listed: krListed
@@ -2272,9 +2307,13 @@ enum SpecialTeamsUnitBuilder {
         let returnUnit = SpecialTeamsUnit(
             title: "Return Men",
             facts: ["from WR / RB / CB", "\(returnCandidates.count) candidates"],
-            note: "Derived from the roster — nothing here is assignable. The depth chart's KR and PR "
-                + "slots are the only return jobs the save holds, and a kickoff is still rolled "
-                + "without reading a returner, so these men change no result yet.",
+            note: "Derived from the roster — nothing here is assignable. KR is ranked on speed and PR "
+                + "on agility, the traits the depth chart's own slots rank on; elusiveness is a "
+                + "running back's attribute only, so it is shown where the domain has it and ranks "
+                + "nobody. Scouted from the receivers, backs and corners — the chart's KR and PR "
+                + "slots will take any position, so a fast safety belongs there and appears here "
+                + "only once he is listed. A kickoff is still rolled without reading a returner, so "
+                + "these men change no result yet.",
             members: kickReturners.map { player in
                 SpecialTeamsUnit.Member(
                     player: player,
@@ -2330,9 +2369,11 @@ enum SpecialTeamsUnitBuilder {
             title: "Blocking Wall",
             facts: ["from the line and the tight ends", "\(blockers.count) candidates"],
             note: "Punt and field-goal protection, ranked on the blocking attributes each room "
-                + "already stores. The simulator prices a punt as a net draw centred on the "
-                + "punter's leg and a field goal as a flat block chance, so this wall is a reading "
-                + "of the roster and not an input.",
+                + "already stores. PRO is a lineman's pass block and anchor averaged — not the PBK "
+                + "on his player card, which is pass block alone; a tight end shows his own BLK. "
+                + "The simulator prices a punt as a net draw centred on the punter's leg and a "
+                + "field goal as a flat block chance, so this wall is a reading of the roster and "
+                + "not an input.",
             members: wall.compactMap { player in
                 guard let read = blocking(of: player) else { return nil }
                 return SpecialTeamsUnit.Member(
@@ -2384,8 +2425,11 @@ enum SpecialTeamsUnitBuilder {
     ///
     /// The kicker and the punter are read on their kicking attributes rather
     /// than on overall, because overall folds in the physical and mental blocks
-    /// that no kicking play consults — the leg and the accuracy are the whole of
-    /// what `PlaySimulator` asks a specialist for.
+    /// that no kicking play consults. The two are NOT read the same way: the
+    /// kicker's leg sets `PlaySimulator.fieldGoalRangeYards` and his accuracy
+    /// sets the field-goal and extra-point make chance, so his term is the mean
+    /// of both; the punt draw reads `kickPower` and nothing else, so the
+    /// punter's term is his leg alone and the row says so.
     ///
     /// The returner terms prefer the chart's own holder and fall back to the man
     /// `DepthChart.reconcile` would install if the slot were left empty (the
@@ -2398,6 +2442,17 @@ enum SpecialTeamsUnitBuilder {
             guard let man = best(position, in: active),
                   case .kicking(let attrs) = man.positionAttributes else {
                 return Rating.Term(label: label, detail: "nobody on the roster", value: nil)
+            }
+            // The punter is priced on his leg alone: `kickAccuracy` is read at
+            // PlaySimulator's field goal and extra point and nowhere else, so
+            // averaging it into a punter would be half a number the simulator
+            // never asks him for.
+            if position == .P {
+                return Rating.Term(
+                    label: label,
+                    detail: "\(man.fullName) \u{00B7} PWR \(attrs.kickPower), leg only",
+                    value: attrs.kickPower
+                )
             }
             return Rating.Term(
                 label: label,
