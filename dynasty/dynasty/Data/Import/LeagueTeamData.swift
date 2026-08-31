@@ -11,6 +11,19 @@ struct LeagueTeamDefinition {
 
 // MARK: - Team Preview (Pre-Generation Scouting Data)
 
+/// One named roster player on the pre-generation scouting card.
+///
+/// Abbreviated exactly like `TeamPreview.startingQBName` — "D. Ashgrove" — for
+/// the same reason: this is a scouting blurb, not a name. The given name behind
+/// the initial is drawn when the man is actually generated (see
+/// `LeagueGenerator.expandedGivenName`), so no player in the league ends up with
+/// a letter for a first name.
+struct TeamPreviewStar: Hashable {
+    let name: String
+    let position: Position
+    let overall: Int
+}
+
 struct TeamPreview {
     let difficulty: Int          // 1-5 stars
     let situation: String        // "Rebuilding", "Rising", "Contender", "Win Now", "Dynasty"
@@ -36,6 +49,26 @@ struct TeamPreview {
     let startingQBName: String   // Starting QB name for scouting preview
     let startingQBOverall: Int   // Starting QB overall rating
     var isLocked: Bool = false   // Whether the team requires an achievement to unlock
+
+    /// The two or three players worth knowing besides the quarterback.
+    ///
+    /// The QB is deliberately NOT repeated here: the sheet already gives him a
+    /// card of his own directly above this one, and a three-name list that
+    /// spends a third of itself restating the card above says nothing new. This
+    /// list exists to name the men that card does not.
+    var stars: [TeamPreviewStar] = []
+
+    /// The best and the worst position room on the roster, as the group labels
+    /// the roster screen grades — "OL", "DB", "ST". Empty when the source has
+    /// no opinion (the `LeagueTeamDefinition.preview` fallback), and the sheet
+    /// simply omits the card.
+    ///
+    /// On the fixed template these are DERIVED from the real ratings
+    /// (`TeamBrowseCatalog`); on the random league they are authored here and
+    /// `LeagueGenerator.generateRoster` makes them true — it does not merely
+    /// hope they are. See `LeagueTeamData.positionGroups`.
+    var strongestGroup: String = ""
+    var weakestGroup: String = ""
 
     /// Previous season W-L record string for display.
     var lastSeasonRecord: String {
@@ -79,56 +112,200 @@ extension LeagueTeamDefinition {
 
 enum LeagueTeamData {
 
+    // MARK: - Position Groups
+
+    /// The nine rooms a roster is graded in, and the label each one prints.
+    ///
+    /// The same nine the roster screen, the intro sequence and the roster
+    /// evaluation already use; stated once here because three things now have
+    /// to agree about them — the authored table below, the generator that makes
+    /// its claim true, and the sheet that prints it.
+    static let positionGroups: [(label: String, positions: [Position])] = [
+        ("QB", [.QB]),
+        ("RB", [.RB, .FB]),
+        ("WR", [.WR]),
+        ("TE", [.TE]),
+        ("OL", [.LT, .LG, .C, .RG, .RT]),
+        ("DL", [.DE, .DT]),
+        ("LB", [.OLB, .MLB]),
+        ("DB", [.CB, .FS, .SS]),
+        ("ST", [.K, .P]),
+    ]
+
+    /// Group label for a position, or `nil` if the position is in no group.
+    static func positionGroupLabel(for position: Position) -> String? {
+        positionGroups.first { $0.positions.contains(position) }?.label
+    }
+
     // MARK: - Team Preview Data
+
+    // AUTHORING NOTES for `stars` / `strongestGroup` / `weakestGroup`.
+    //
+    // • Star overalls track `estimatedOVR` and `situation`: a Contender's best
+    //   man sits 6-9 above the club's roster estimate, a Rebuilding club's
+    //   12-18 above it and never at 90 — one good player is what a bad roster
+    //   has, three All-Pros is not.
+    // • The starting quarterback is a star and is NOT repeated in `stars`; see
+    //   the field's own comment.
+    // • A star is never listed in the club's `weakestGroup` — that would be the
+    //   card contradicting itself on one screen.
+    // • `strongestGroup` is "QB" wherever the authored quarterback outrates
+    //   anything another room can reach (roughly 86+). That is not taste: the
+    //   QB room has exactly one starter, so its grade IS the quarterback's
+    //   overall, and no amount of generator bias can lift a four-man defensive
+    //   line above a 97-rated passer without wrecking the roster.
+    // • `strongestGroup` is never "WR". The 53-man blueprint gives the receiver
+    //   room one first-tier body and six depth ones, so its third starter is
+    //   always a depth-tier player and the room cannot grade out on top. A star
+    //   receiver is still a star — he just does not make the room the best one.
 
     static let previews: [String: TeamPreview] = [
         // AFC East
-        "BUF": TeamPreview(difficulty: 3, situation: "Contender", ownerPatience: "Moderate", patienceSeasons: 3, marketDescription: "Passionate fan base with moderate media coverage", estimatedOVR: 82, estimatedCapSpace: 18, estimatedDraftPicks: 7, coachingBudget: 43, spendingWillingness: 55, lastSeasonWins: 11, lastSeasonLosses: 6, startingQBName: "S. Loftin", startingQBOverall: 92),
-        "MIA": TeamPreview(difficulty: 3, situation: "Rising", ownerPatience: "Moderate", patienceSeasons: 3, marketDescription: "Large market with national spotlight and high fan expectations", estimatedOVR: 78, estimatedCapSpace: 22, estimatedDraftPicks: 7, coachingBudget: 45, spendingWillingness: 50, lastSeasonWins: 9, lastSeasonLosses: 8, startingQBName: "G. Kimbrough", startingQBOverall: 81),
-        "NE":  TeamPreview(difficulty: 2, situation: "Rebuilding", ownerPatience: "Patient", patienceSeasons: 4, marketDescription: "Storied franchise, media expects return to glory", estimatedOVR: 70, estimatedCapSpace: 40, estimatedDraftPicks: 9, coachingBudget: 38, spendingWillingness: 45, lastSeasonWins: 4, lastSeasonLosses: 13, startingQBName: "H. Grimsley", startingQBOverall: 68),
-        "NYJ": TeamPreview(difficulty: 4, situation: "Rising", ownerPatience: "Demanding", patienceSeasons: 2, marketDescription: "Intense scrutiny, win now pressure from NYC media", estimatedOVR: 74, estimatedCapSpace: 20, estimatedDraftPicks: 7, coachingBudget: 48, spendingWillingness: 70, lastSeasonWins: 5, lastSeasonLosses: 12, startingQBName: "F. Danforth", startingQBOverall: 74),
+        "BUF": TeamPreview(difficulty: 3, situation: "Contender", ownerPatience: "Moderate", patienceSeasons: 3, marketDescription: "Passionate fan base with moderate media coverage", estimatedOVR: 82, estimatedCapSpace: 18, estimatedDraftPicks: 7, coachingBudget: 43, spendingWillingness: 55, lastSeasonWins: 11, lastSeasonLosses: 6, startingQBName: "S. Loftin", startingQBOverall: 92,
+                           stars: [TeamPreviewStar(name: "D. Ashgrove", position: .WR, overall: 88),
+                                   TeamPreviewStar(name: "T. Carbury", position: .MLB, overall: 84)],
+                           strongestGroup: "QB", weakestGroup: "OL"),
+        "MIA": TeamPreview(difficulty: 3, situation: "Rising", ownerPatience: "Moderate", patienceSeasons: 3, marketDescription: "Large market with national spotlight and high fan expectations", estimatedOVR: 78, estimatedCapSpace: 22, estimatedDraftPicks: 7, coachingBudget: 45, spendingWillingness: 50, lastSeasonWins: 9, lastSeasonLosses: 8, startingQBName: "G. Kimbrough", startingQBOverall: 81,
+                           stars: [TeamPreviewStar(name: "K. Wilbraham", position: .WR, overall: 86),
+                                   TeamPreviewStar(name: "D. Alcott", position: .CB, overall: 82)],
+                           strongestGroup: "DB", weakestGroup: "OL"),
+        "NE":  TeamPreview(difficulty: 2, situation: "Rebuilding", ownerPatience: "Patient", patienceSeasons: 4, marketDescription: "Storied franchise, media expects return to glory", estimatedOVR: 70, estimatedCapSpace: 40, estimatedDraftPicks: 9, coachingBudget: 38, spendingWillingness: 45, lastSeasonWins: 4, lastSeasonLosses: 13, startingQBName: "H. Grimsley", startingQBOverall: 68,
+                           stars: [TeamPreviewStar(name: "R. Halloway", position: .CB, overall: 83),
+                                   TeamPreviewStar(name: "M. Pierrepont", position: .LT, overall: 78)],
+                           strongestGroup: "DB", weakestGroup: "QB"),
+        "NYJ": TeamPreview(difficulty: 4, situation: "Rising", ownerPatience: "Demanding", patienceSeasons: 2, marketDescription: "Intense scrutiny, win now pressure from NYC media", estimatedOVR: 74, estimatedCapSpace: 20, estimatedDraftPicks: 7, coachingBudget: 48, spendingWillingness: 70, lastSeasonWins: 5, lastSeasonLosses: 12, startingQBName: "F. Danforth", startingQBOverall: 74,
+                           stars: [TeamPreviewStar(name: "A. Quillon", position: .DE, overall: 87),
+                                   TeamPreviewStar(name: "S. Marchetti", position: .CB, overall: 82)],
+                           strongestGroup: "DL", weakestGroup: "TE"),
 
         // AFC North
-        "BAL": TeamPreview(difficulty: 3, situation: "Contender", ownerPatience: "Moderate", patienceSeasons: 3, marketDescription: "Loyal fan base that expects tough, competitive football", estimatedOVR: 83, estimatedCapSpace: 15, estimatedDraftPicks: 7, coachingBudget: 46, spendingWillingness: 55, lastSeasonWins: 12, lastSeasonLosses: 5, startingQBName: "J. Falkenrath", startingQBOverall: 94),
-        "CIN": TeamPreview(difficulty: 3, situation: "Contender", ownerPatience: "Patient", patienceSeasons: 4, marketDescription: "Moderate expectations with a growing fan base", estimatedOVR: 80, estimatedCapSpace: 28, estimatedDraftPicks: 7, coachingBudget: 37, spendingWillingness: 40, lastSeasonWins: 9, lastSeasonLosses: 8, startingQBName: "E. Pallister", startingQBOverall: 91),
-        "CLE": TeamPreview(difficulty: 4, situation: "Rebuilding", ownerPatience: "Demanding", patienceSeasons: 2, marketDescription: "Passionate but frustrated fan base demanding results", estimatedOVR: 68, estimatedCapSpace: 12, estimatedDraftPicks: 6, coachingBudget: 40, spendingWillingness: 65, lastSeasonWins: 3, lastSeasonLosses: 14, startingQBName: "L. Medlock", startingQBOverall: 65),
-        "PIT": TeamPreview(difficulty: 3, situation: "Rising", ownerPatience: "Patient", patienceSeasons: 4, marketDescription: "Blue-collar market that values toughness and consistency", estimatedOVR: 76, estimatedCapSpace: 30, estimatedDraftPicks: 8, coachingBudget: 39, spendingWillingness: 45, lastSeasonWins: 10, lastSeasonLosses: 7, startingQBName: "L. Rittenhouse", startingQBOverall: 76),
+        "BAL": TeamPreview(difficulty: 3, situation: "Contender", ownerPatience: "Moderate", patienceSeasons: 3, marketDescription: "Loyal fan base that expects tough, competitive football", estimatedOVR: 83, estimatedCapSpace: 15, estimatedDraftPicks: 7, coachingBudget: 46, spendingWillingness: 55, lastSeasonWins: 12, lastSeasonLosses: 5, startingQBName: "J. Falkenrath", startingQBOverall: 94,
+                           stars: [TeamPreviewStar(name: "C. Wexford", position: .MLB, overall: 89),
+                                   TeamPreviewStar(name: "E. Thackery", position: .LT, overall: 84)],
+                           strongestGroup: "QB", weakestGroup: "WR"),
+        "CIN": TeamPreview(difficulty: 3, situation: "Contender", ownerPatience: "Patient", patienceSeasons: 4, marketDescription: "Moderate expectations with a growing fan base", estimatedOVR: 80, estimatedCapSpace: 28, estimatedDraftPicks: 7, coachingBudget: 37, spendingWillingness: 40, lastSeasonWins: 9, lastSeasonLosses: 8, startingQBName: "E. Pallister", startingQBOverall: 91,
+                           stars: [TeamPreviewStar(name: "J. Prendergast", position: .WR, overall: 89),
+                                   TeamPreviewStar(name: "O. Ballinger", position: .DT, overall: 83)],
+                           strongestGroup: "QB", weakestGroup: "OL"),
+        "CLE": TeamPreview(difficulty: 4, situation: "Rebuilding", ownerPatience: "Demanding", patienceSeasons: 2, marketDescription: "Passionate but frustrated fan base demanding results", estimatedOVR: 68, estimatedCapSpace: 12, estimatedDraftPicks: 6, coachingBudget: 40, spendingWillingness: 65, lastSeasonWins: 3, lastSeasonLosses: 14, startingQBName: "L. Medlock", startingQBOverall: 65,
+                           stars: [TeamPreviewStar(name: "M. Ashendon", position: .DE, overall: 86),
+                                   TeamPreviewStar(name: "T. Corcoran", position: .DT, overall: 80)],
+                           strongestGroup: "DL", weakestGroup: "QB"),
+        "PIT": TeamPreview(difficulty: 3, situation: "Rising", ownerPatience: "Patient", patienceSeasons: 4, marketDescription: "Blue-collar market that values toughness and consistency", estimatedOVR: 76, estimatedCapSpace: 30, estimatedDraftPicks: 8, coachingBudget: 39, spendingWillingness: 45, lastSeasonWins: 10, lastSeasonLosses: 7, startingQBName: "L. Rittenhouse", startingQBOverall: 76,
+                           stars: [TeamPreviewStar(name: "B. Hollowell", position: .OLB, overall: 88),
+                                   TeamPreviewStar(name: "K. Nesbitt", position: .SS, overall: 82)],
+                           strongestGroup: "LB", weakestGroup: "WR"),
 
         // AFC South
-        "HOU": TeamPreview(difficulty: 3, situation: "Contender", ownerPatience: "Moderate", patienceSeasons: 3, marketDescription: "Large market with growing national media attention", estimatedOVR: 81, estimatedCapSpace: 20, estimatedDraftPicks: 7, coachingBudget: 47, spendingWillingness: 55, lastSeasonWins: 10, lastSeasonLosses: 7, startingQBName: "M. Wimberly", startingQBOverall: 86),
-        "IND": TeamPreview(difficulty: 2, situation: "Rising", ownerPatience: "Patient", patienceSeasons: 4, marketDescription: "Moderate expectations, patient ownership group", estimatedOVR: 75, estimatedCapSpace: 35, estimatedDraftPicks: 8, coachingBudget: 34, spendingWillingness: 40, lastSeasonWins: 8, lastSeasonLosses: 9, startingQBName: "J. Eberhardt", startingQBOverall: 73),
-        "JAX": TeamPreview(difficulty: 1, situation: "Rebuilding", ownerPatience: "Very Patient", patienceSeasons: 5, marketDescription: "Low pressure, patient fans rebuilding culture", estimatedOVR: 66, estimatedCapSpace: 50, estimatedDraftPicks: 10, coachingBudget: 24, spendingWillingness: 25, lastSeasonWins: 4, lastSeasonLosses: 13, startingQBName: "B. Vandenberg", startingQBOverall: 78),
-        "TEN": TeamPreview(difficulty: 2, situation: "Rebuilding", ownerPatience: "Patient", patienceSeasons: 4, marketDescription: "Quiet market with room to build without pressure", estimatedOVR: 69, estimatedCapSpace: 42, estimatedDraftPicks: 9, coachingBudget: 29, spendingWillingness: 35, lastSeasonWins: 3, lastSeasonLosses: 14, startingQBName: "D. Yeardley", startingQBOverall: 67),
+        "HOU": TeamPreview(difficulty: 3, situation: "Contender", ownerPatience: "Moderate", patienceSeasons: 3, marketDescription: "Large market with growing national media attention", estimatedOVR: 81, estimatedCapSpace: 20, estimatedDraftPicks: 7, coachingBudget: 47, spendingWillingness: 55, lastSeasonWins: 10, lastSeasonLosses: 7, startingQBName: "M. Wimberly", startingQBOverall: 86,
+                           stars: [TeamPreviewStar(name: "D. Fairbrother", position: .WR, overall: 87),
+                                   TeamPreviewStar(name: "L. Ockleton", position: .DE, overall: 84)],
+                           strongestGroup: "QB", weakestGroup: "RB"),
+        "IND": TeamPreview(difficulty: 2, situation: "Rising", ownerPatience: "Patient", patienceSeasons: 4, marketDescription: "Moderate expectations, patient ownership group", estimatedOVR: 75, estimatedCapSpace: 35, estimatedDraftPicks: 8, coachingBudget: 34, spendingWillingness: 40, lastSeasonWins: 8, lastSeasonLosses: 9, startingQBName: "J. Eberhardt", startingQBOverall: 73,
+                           stars: [TeamPreviewStar(name: "R. Tolliver", position: .RB, overall: 86),
+                                   TeamPreviewStar(name: "W. Braddock", position: .LG, overall: 81)],
+                           strongestGroup: "OL", weakestGroup: "DB"),
+        "JAX": TeamPreview(difficulty: 1, situation: "Rebuilding", ownerPatience: "Very Patient", patienceSeasons: 5, marketDescription: "Low pressure, patient fans rebuilding culture", estimatedOVR: 66, estimatedCapSpace: 50, estimatedDraftPicks: 10, coachingBudget: 24, spendingWillingness: 25, lastSeasonWins: 4, lastSeasonLosses: 13, startingQBName: "B. Vandenberg", startingQBOverall: 78,
+                           stars: [TeamPreviewStar(name: "N. Ellery", position: .WR, overall: 82),
+                                   TeamPreviewStar(name: "P. Vanterpool", position: .CB, overall: 78)],
+                           strongestGroup: "DB", weakestGroup: "OL"),
+        "TEN": TeamPreview(difficulty: 2, situation: "Rebuilding", ownerPatience: "Patient", patienceSeasons: 4, marketDescription: "Quiet market with room to build without pressure", estimatedOVR: 69, estimatedCapSpace: 42, estimatedDraftPicks: 9, coachingBudget: 29, spendingWillingness: 35, lastSeasonWins: 3, lastSeasonLosses: 14, startingQBName: "D. Yeardley", startingQBOverall: 67,
+                           stars: [TeamPreviewStar(name: "H. Brambleton", position: .MLB, overall: 83),
+                                   TeamPreviewStar(name: "J. Ormsby", position: .OLB, overall: 79)],
+                           strongestGroup: "LB", weakestGroup: "QB"),
 
         // AFC West
-        "DEN": TeamPreview(difficulty: 3, situation: "Rising", ownerPatience: "Moderate", patienceSeasons: 3, marketDescription: "Dedicated fan base expecting a return to prominence", estimatedOVR: 76, estimatedCapSpace: 25, estimatedDraftPicks: 7, coachingBudget: 41, spendingWillingness: 50, lastSeasonWins: 10, lastSeasonLosses: 7, startingQBName: "A. Lemoine", startingQBOverall: 79),
-        "KC":  TeamPreview(difficulty: 4, situation: "Dynasty", ownerPatience: "Moderate", patienceSeasons: 3, marketDescription: "Championship culture, high expectations to sustain success", estimatedOVR: 87, estimatedCapSpace: 10, estimatedDraftPicks: 6, coachingBudget: 48, spendingWillingness: 60, lastSeasonWins: 15, lastSeasonLosses: 2, startingQBName: "S. Osgood", startingQBOverall: 97),
-        "LV":  TeamPreview(difficulty: 4, situation: "Rebuilding", ownerPatience: "Demanding", patienceSeasons: 2, marketDescription: "Flashy market with impatient ownership wanting results fast", estimatedOVR: 70, estimatedCapSpace: 18, estimatedDraftPicks: 7, coachingBudget: 48, spendingWillingness: 70, lastSeasonWins: 4, lastSeasonLosses: 13, startingQBName: "T. Hanneman", startingQBOverall: 66),
-        "LAC": TeamPreview(difficulty: 3, situation: "Rising", ownerPatience: "Moderate", patienceSeasons: 3, marketDescription: "Large market but competing for attention in LA", estimatedOVR: 77, estimatedCapSpace: 28, estimatedDraftPicks: 7, coachingBudget: 45, spendingWillingness: 50, lastSeasonWins: 11, lastSeasonLosses: 6, startingQBName: "P. Jimison", startingQBOverall: 87),
+        "DEN": TeamPreview(difficulty: 3, situation: "Rising", ownerPatience: "Moderate", patienceSeasons: 3, marketDescription: "Dedicated fan base expecting a return to prominence", estimatedOVR: 76, estimatedCapSpace: 25, estimatedDraftPicks: 7, coachingBudget: 41, spendingWillingness: 50, lastSeasonWins: 10, lastSeasonLosses: 7, startingQBName: "A. Lemoine", startingQBOverall: 79,
+                           stars: [TeamPreviewStar(name: "C. Aldington", position: .CB, overall: 88),
+                                   TeamPreviewStar(name: "M. Duquesne", position: .OLB, overall: 83)],
+                           strongestGroup: "DB", weakestGroup: "TE"),
+        "KC":  TeamPreview(difficulty: 4, situation: "Dynasty", ownerPatience: "Moderate", patienceSeasons: 3, marketDescription: "Championship culture, high expectations to sustain success", estimatedOVR: 87, estimatedCapSpace: 10, estimatedDraftPicks: 6, coachingBudget: 48, spendingWillingness: 60, lastSeasonWins: 15, lastSeasonLosses: 2, startingQBName: "S. Osgood", startingQBOverall: 97,
+                           stars: [TeamPreviewStar(name: "T. Vanderhoek", position: .TE, overall: 92),
+                                   TeamPreviewStar(name: "R. Marchand", position: .DE, overall: 86)],
+                           strongestGroup: "QB", weakestGroup: "OL"),
+        "LV":  TeamPreview(difficulty: 4, situation: "Rebuilding", ownerPatience: "Demanding", patienceSeasons: 2, marketDescription: "Flashy market with impatient ownership wanting results fast", estimatedOVR: 70, estimatedCapSpace: 18, estimatedDraftPicks: 7, coachingBudget: 48, spendingWillingness: 70, lastSeasonWins: 4, lastSeasonLosses: 13, startingQBName: "T. Hanneman", startingQBOverall: 66,
+                           stars: [TeamPreviewStar(name: "E. Braithwaite", position: .DE, overall: 86),
+                                   TeamPreviewStar(name: "C. Ludlow", position: .SS, overall: 79)],
+                           strongestGroup: "DL", weakestGroup: "QB"),
+        "LAC": TeamPreview(difficulty: 3, situation: "Rising", ownerPatience: "Moderate", patienceSeasons: 3, marketDescription: "Large market but competing for attention in LA", estimatedOVR: 77, estimatedCapSpace: 28, estimatedDraftPicks: 7, coachingBudget: 45, spendingWillingness: 50, lastSeasonWins: 11, lastSeasonLosses: 6, startingQBName: "P. Jimison", startingQBOverall: 87,
+                           stars: [TeamPreviewStar(name: "G. Maitland", position: .LT, overall: 87),
+                                   TeamPreviewStar(name: "A. Sowerby", position: .OLB, overall: 83)],
+                           strongestGroup: "QB", weakestGroup: "RB"),
 
         // NFC East
-        "DAL": TeamPreview(difficulty: 5, situation: "Win Now", ownerPatience: "Win Now", patienceSeasons: 1, marketDescription: "The most-watched franchise in the League — maximum media pressure at all times", estimatedOVR: 80, estimatedCapSpace: 12, estimatedDraftPicks: 6, coachingBudget: 57, spendingWillingness: 85, lastSeasonWins: 7, lastSeasonLosses: 10, startingQBName: "R. Frobisher", startingQBOverall: 84),
-        "NYG": TeamPreview(difficulty: 4, situation: "Rebuilding", ownerPatience: "Demanding", patienceSeasons: 2, marketDescription: "NYC market demands winners, legacy franchise with high bar", estimatedOVR: 67, estimatedCapSpace: 22, estimatedDraftPicks: 8, coachingBudget: 46, spendingWillingness: 70, lastSeasonWins: 3, lastSeasonLosses: 14, startingQBName: "W. Rigsbee", startingQBOverall: 64),
-        "PHI": TeamPreview(difficulty: 4, situation: "Contender", ownerPatience: "Demanding", patienceSeasons: 2, marketDescription: "Intense scrutiny, passionate fan base expects championships", estimatedOVR: 84, estimatedCapSpace: 14, estimatedDraftPicks: 6, coachingBudget: 60, spendingWillingness: 75, lastSeasonWins: 14, lastSeasonLosses: 3, startingQBName: "V. Sweetland", startingQBOverall: 90),
-        "WAS": TeamPreview(difficulty: 3, situation: "Rising", ownerPatience: "Moderate", patienceSeasons: 3, marketDescription: "Rebuilding brand in a major market, moderate pressure", estimatedOVR: 73, estimatedCapSpace: 32, estimatedDraftPicks: 8, coachingBudget: 48, spendingWillingness: 50, lastSeasonWins: 12, lastSeasonLosses: 5, startingQBName: "S. Stapleton", startingQBOverall: 82),
+        "DAL": TeamPreview(difficulty: 5, situation: "Win Now", ownerPatience: "Win Now", patienceSeasons: 1, marketDescription: "The most-watched franchise in the League — maximum media pressure at all times", estimatedOVR: 80, estimatedCapSpace: 12, estimatedDraftPicks: 6, coachingBudget: 57, spendingWillingness: 85, lastSeasonWins: 7, lastSeasonLosses: 10, startingQBName: "R. Frobisher", startingQBOverall: 84,
+                           stars: [TeamPreviewStar(name: "W. Ashcombe", position: .WR, overall: 90),
+                                   TeamPreviewStar(name: "R. Delacroix", position: .DE, overall: 86)],
+                           strongestGroup: "DL", weakestGroup: "DB"),
+        "NYG": TeamPreview(difficulty: 4, situation: "Rebuilding", ownerPatience: "Demanding", patienceSeasons: 2, marketDescription: "NYC market demands winners, legacy franchise with high bar", estimatedOVR: 67, estimatedCapSpace: 22, estimatedDraftPicks: 8, coachingBudget: 46, spendingWillingness: 70, lastSeasonWins: 3, lastSeasonLosses: 14, startingQBName: "W. Rigsbee", startingQBOverall: 64,
+                           stars: [TeamPreviewStar(name: "F. Whitmarsh", position: .DE, overall: 84),
+                                   TeamPreviewStar(name: "T. Blackwood", position: .DT, overall: 78)],
+                           strongestGroup: "DL", weakestGroup: "QB"),
+        "PHI": TeamPreview(difficulty: 4, situation: "Contender", ownerPatience: "Demanding", patienceSeasons: 2, marketDescription: "Intense scrutiny, passionate fan base expects championships", estimatedOVR: 84, estimatedCapSpace: 14, estimatedDraftPicks: 6, coachingBudget: 60, spendingWillingness: 75, lastSeasonWins: 14, lastSeasonLosses: 3, startingQBName: "V. Sweetland", startingQBOverall: 90,
+                           stars: [TeamPreviewStar(name: "D. Ferrers", position: .DT, overall: 91),
+                                   TeamPreviewStar(name: "H. Alcorn", position: .CB, overall: 86),
+                                   TeamPreviewStar(name: "M. Trentham", position: .LT, overall: 84)],
+                           strongestGroup: "QB", weakestGroup: "TE"),
+        "WAS": TeamPreview(difficulty: 3, situation: "Rising", ownerPatience: "Moderate", patienceSeasons: 3, marketDescription: "Rebuilding brand in a major market, moderate pressure", estimatedOVR: 73, estimatedCapSpace: 32, estimatedDraftPicks: 8, coachingBudget: 48, spendingWillingness: 50, lastSeasonWins: 12, lastSeasonLosses: 5, startingQBName: "S. Stapleton", startingQBOverall: 82,
+                           stars: [TeamPreviewStar(name: "J. Pemberton", position: .WR, overall: 85),
+                                   TeamPreviewStar(name: "S. Marlborough", position: .MLB, overall: 82)],
+                           strongestGroup: "LB", weakestGroup: "OL"),
 
         // NFC North
-        "CHI": TeamPreview(difficulty: 4, situation: "Rising", ownerPatience: "Demanding", patienceSeasons: 2, marketDescription: "Massive market, title-starved fan base growing impatient", estimatedOVR: 74, estimatedCapSpace: 35, estimatedDraftPicks: 8, coachingBudget: 48, spendingWillingness: 70, lastSeasonWins: 5, lastSeasonLosses: 12, startingQBName: "J. Oldenburg", startingQBOverall: 74),
-        "DET": TeamPreview(difficulty: 3, situation: "Contender", ownerPatience: "Moderate", patienceSeasons: 3, marketDescription: "Hungry fan base riding momentum, rising expectations", estimatedOVR: 83, estimatedCapSpace: 16, estimatedDraftPicks: 7, coachingBudget: 46, spendingWillingness: 55, lastSeasonWins: 15, lastSeasonLosses: 2, startingQBName: "S. Carrington", startingQBOverall: 88),
-        "GB":  TeamPreview(difficulty: 2, situation: "Rising", ownerPatience: "Very Patient", patienceSeasons: 5, marketDescription: "Small market, community-first ownership — unique patience and loyalty", estimatedOVR: 78, estimatedCapSpace: 25, estimatedDraftPicks: 7, coachingBudget: 27, spendingWillingness: 25, lastSeasonWins: 11, lastSeasonLosses: 6, startingQBName: "B. Bidwell", startingQBOverall: 83),
-        "MIN": TeamPreview(difficulty: 3, situation: "Contender", ownerPatience: "Moderate", patienceSeasons: 3, marketDescription: "Dedicated fans with moderate media presence", estimatedOVR: 80, estimatedCapSpace: 20, estimatedDraftPicks: 7, coachingBudget: 46, spendingWillingness: 55, lastSeasonWins: 14, lastSeasonLosses: 3, startingQBName: "B. Tanberg", startingQBOverall: 80),
+        "CHI": TeamPreview(difficulty: 4, situation: "Rising", ownerPatience: "Demanding", patienceSeasons: 2, marketDescription: "Massive market, title-starved fan base growing impatient", estimatedOVR: 74, estimatedCapSpace: 35, estimatedDraftPicks: 8, coachingBudget: 48, spendingWillingness: 70, lastSeasonWins: 5, lastSeasonLosses: 12, startingQBName: "J. Oldenburg", startingQBOverall: 74,
+                           stars: [TeamPreviewStar(name: "V. Ostrander", position: .OLB, overall: 87),
+                                   TeamPreviewStar(name: "R. Calloway", position: .CB, overall: 83)],
+                           strongestGroup: "LB", weakestGroup: "TE"),
+        "DET": TeamPreview(difficulty: 3, situation: "Contender", ownerPatience: "Moderate", patienceSeasons: 3, marketDescription: "Hungry fan base riding momentum, rising expectations", estimatedOVR: 83, estimatedCapSpace: 16, estimatedDraftPicks: 7, coachingBudget: 46, spendingWillingness: 55, lastSeasonWins: 15, lastSeasonLosses: 2, startingQBName: "S. Carrington", startingQBOverall: 88,
+                           stars: [TeamPreviewStar(name: "N. Hargreaves", position: .WR, overall: 90),
+                                   TeamPreviewStar(name: "B. Sorensen", position: .LT, overall: 85),
+                                   TeamPreviewStar(name: "K. Ridgeway", position: .OLB, overall: 83)],
+                           strongestGroup: "QB", weakestGroup: "ST"),
+        "GB":  TeamPreview(difficulty: 2, situation: "Rising", ownerPatience: "Very Patient", patienceSeasons: 5, marketDescription: "Small market, community-first ownership — unique patience and loyalty", estimatedOVR: 78, estimatedCapSpace: 25, estimatedDraftPicks: 7, coachingBudget: 27, spendingWillingness: 25, lastSeasonWins: 11, lastSeasonLosses: 6, startingQBName: "B. Bidwell", startingQBOverall: 83,
+                           stars: [TeamPreviewStar(name: "L. Vandersloot", position: .WR, overall: 86),
+                                   TeamPreviewStar(name: "T. Kirkbride", position: .C, overall: 82)],
+                           strongestGroup: "OL", weakestGroup: "ST"),
+        "MIN": TeamPreview(difficulty: 3, situation: "Contender", ownerPatience: "Moderate", patienceSeasons: 3, marketDescription: "Dedicated fans with moderate media presence", estimatedOVR: 80, estimatedCapSpace: 20, estimatedDraftPicks: 7, coachingBudget: 46, spendingWillingness: 55, lastSeasonWins: 14, lastSeasonLosses: 3, startingQBName: "B. Tanberg", startingQBOverall: 80,
+                           stars: [TeamPreviewStar(name: "A. Fennimore", position: .WR, overall: 90),
+                                   TeamPreviewStar(name: "D. Thorsby", position: .SS, overall: 84)],
+                           strongestGroup: "DB", weakestGroup: "OL"),
 
         // NFC South
-        "ATL": TeamPreview(difficulty: 3, situation: "Rising", ownerPatience: "Moderate", patienceSeasons: 3, marketDescription: "Large market pushing for relevance, growing expectations", estimatedOVR: 75, estimatedCapSpace: 22, estimatedDraftPicks: 7, coachingBudget: 42, spendingWillingness: 50, lastSeasonWins: 8, lastSeasonLosses: 9, startingQBName: "R. Cunliffe", startingQBOverall: 77),
-        "CAR": TeamPreview(difficulty: 1, situation: "Rebuilding", ownerPatience: "Very Patient", patienceSeasons: 5, marketDescription: "Low pressure market with a patient, long-term approach", estimatedOVR: 64, estimatedCapSpace: 55, estimatedDraftPicks: 10, coachingBudget: 24, spendingWillingness: 20, lastSeasonWins: 2, lastSeasonLosses: 15, startingQBName: "F. Gilliland", startingQBOverall: 62),
-        "NO":  TeamPreview(difficulty: 3, situation: "Rebuilding", ownerPatience: "Moderate", patienceSeasons: 3, marketDescription: "Passionate city, transitioning from a championship era", estimatedOVR: 72, estimatedCapSpace: 8, estimatedDraftPicks: 7, coachingBudget: 36, spendingWillingness: 50, lastSeasonWins: 5, lastSeasonLosses: 12, startingQBName: "R. Greenhalgh", startingQBOverall: 75),
-        "TB":  TeamPreview(difficulty: 2, situation: "Rebuilding", ownerPatience: "Patient", patienceSeasons: 4, marketDescription: "Moderate market, post-dynasty reset with room to grow", estimatedOVR: 71, estimatedCapSpace: 38, estimatedDraftPicks: 8, coachingBudget: 37, spendingWillingness: 40, lastSeasonWins: 10, lastSeasonLosses: 7, startingQBName: "V. Poteet", startingQBOverall: 80),
+        "ATL": TeamPreview(difficulty: 3, situation: "Rising", ownerPatience: "Moderate", patienceSeasons: 3, marketDescription: "Large market pushing for relevance, growing expectations", estimatedOVR: 75, estimatedCapSpace: 22, estimatedDraftPicks: 7, coachingBudget: 42, spendingWillingness: 50, lastSeasonWins: 8, lastSeasonLosses: 9, startingQBName: "R. Cunliffe", startingQBOverall: 77,
+                           stars: [TeamPreviewStar(name: "J. Barlowe", position: .RB, overall: 87),
+                                   TeamPreviewStar(name: "C. Winterbourne", position: .WR, overall: 83)],
+                           strongestGroup: "RB", weakestGroup: "DL"),
+        "CAR": TeamPreview(difficulty: 1, situation: "Rebuilding", ownerPatience: "Very Patient", patienceSeasons: 5, marketDescription: "Low pressure market with a patient, long-term approach", estimatedOVR: 64, estimatedCapSpace: 55, estimatedDraftPicks: 10, coachingBudget: 24, spendingWillingness: 20, lastSeasonWins: 2, lastSeasonLosses: 15, startingQBName: "F. Gilliland", startingQBOverall: 62,
+                           stars: [TeamPreviewStar(name: "E. Hollingsworth", position: .CB, overall: 81),
+                                   TeamPreviewStar(name: "M. Prynne", position: .FS, overall: 76)],
+                           strongestGroup: "DB", weakestGroup: "QB"),
+        "NO":  TeamPreview(difficulty: 3, situation: "Rebuilding", ownerPatience: "Moderate", patienceSeasons: 3, marketDescription: "Passionate city, transitioning from a championship era", estimatedOVR: 72, estimatedCapSpace: 8, estimatedDraftPicks: 7, coachingBudget: 36, spendingWillingness: 50, lastSeasonWins: 5, lastSeasonLosses: 12, startingQBName: "R. Greenhalgh", startingQBOverall: 75,
+                           stars: [TeamPreviewStar(name: "R. Tancred", position: .OLB, overall: 85),
+                                   TeamPreviewStar(name: "G. Ashby", position: .C, overall: 80)],
+                           strongestGroup: "LB", weakestGroup: "WR"),
+        "TB":  TeamPreview(difficulty: 2, situation: "Rebuilding", ownerPatience: "Patient", patienceSeasons: 4, marketDescription: "Moderate market, post-dynasty reset with room to grow", estimatedOVR: 71, estimatedCapSpace: 38, estimatedDraftPicks: 8, coachingBudget: 37, spendingWillingness: 40, lastSeasonWins: 10, lastSeasonLosses: 7, startingQBName: "V. Poteet", startingQBOverall: 80,
+                           stars: [TeamPreviewStar(name: "D. Mowbray", position: .WR, overall: 84),
+                                   TeamPreviewStar(name: "F. Larkspur", position: .C, overall: 79)],
+                           strongestGroup: "OL", weakestGroup: "LB"),
 
         // NFC West
-        "ARI": TeamPreview(difficulty: 2, situation: "Rebuilding", ownerPatience: "Patient", patienceSeasons: 4, marketDescription: "Moderate market with a patient ownership group", estimatedOVR: 69, estimatedCapSpace: 40, estimatedDraftPicks: 9, coachingBudget: 32, spendingWillingness: 35, lastSeasonWins: 8, lastSeasonLosses: 9, startingQBName: "A. Jorgensen", startingQBOverall: 80),
-        "LAR": TeamPreview(difficulty: 4, situation: "Win Now", ownerPatience: "Demanding", patienceSeasons: 2, marketDescription: "Win now in LA — star-driven franchise under constant spotlight", estimatedOVR: 79, estimatedCapSpace: 10, estimatedDraftPicks: 5, coachingBudget: 57, spendingWillingness: 75, lastSeasonWins: 10, lastSeasonLosses: 7, startingQBName: "N. Willoughby", startingQBOverall: 83),
-        "SF":  TeamPreview(difficulty: 4, situation: "Contender", ownerPatience: "Demanding", patienceSeasons: 2, marketDescription: "Elite expectations, championship-or-bust mentality", estimatedOVR: 85, estimatedCapSpace: 12, estimatedDraftPicks: 6, coachingBudget: 50, spendingWillingness: 75, lastSeasonWins: 6, lastSeasonLosses: 11, startingQBName: "N. Hardesty", startingQBOverall: 85),
-        "SEA": TeamPreview(difficulty: 3, situation: "Rising", ownerPatience: "Moderate", patienceSeasons: 3, marketDescription: "Deafening home crowd, moderate media market", estimatedOVR: 77, estimatedCapSpace: 24, estimatedDraftPicks: 7, coachingBudget: 41, spendingWillingness: 50, lastSeasonWins: 10, lastSeasonLosses: 7, startingQBName: "J. Vestergaard", startingQBOverall: 79),
+        "ARI": TeamPreview(difficulty: 2, situation: "Rebuilding", ownerPatience: "Patient", patienceSeasons: 4, marketDescription: "Moderate market with a patient ownership group", estimatedOVR: 69, estimatedCapSpace: 40, estimatedDraftPicks: 9, coachingBudget: 32, spendingWillingness: 35, lastSeasonWins: 8, lastSeasonLosses: 9, startingQBName: "A. Jorgensen", startingQBOverall: 80,
+                           stars: [TeamPreviewStar(name: "S. Everly", position: .TE, overall: 84),
+                                   TeamPreviewStar(name: "N. Chadbourne", position: .CB, overall: 79)],
+                           strongestGroup: "TE", weakestGroup: "DL"),
+        "LAR": TeamPreview(difficulty: 4, situation: "Win Now", ownerPatience: "Demanding", patienceSeasons: 2, marketDescription: "Win now in LA — star-driven franchise under constant spotlight", estimatedOVR: 79, estimatedCapSpace: 10, estimatedDraftPicks: 5, coachingBudget: 57, spendingWillingness: 75, lastSeasonWins: 10, lastSeasonLosses: 7, startingQBName: "N. Willoughby", startingQBOverall: 83,
+                           stars: [TeamPreviewStar(name: "K. Ravenel", position: .DT, overall: 90),
+                                   TeamPreviewStar(name: "J. Sinclair", position: .WR, overall: 85)],
+                           strongestGroup: "DL", weakestGroup: "OL"),
+        "SF":  TeamPreview(difficulty: 4, situation: "Contender", ownerPatience: "Demanding", patienceSeasons: 2, marketDescription: "Elite expectations, championship-or-bust mentality", estimatedOVR: 85, estimatedCapSpace: 12, estimatedDraftPicks: 6, coachingBudget: 50, spendingWillingness: 75, lastSeasonWins: 6, lastSeasonLosses: 11, startingQBName: "N. Hardesty", startingQBOverall: 85,
+                           stars: [TeamPreviewStar(name: "T. Whitlock", position: .TE, overall: 92),
+                                   TeamPreviewStar(name: "R. Beaumont", position: .DE, overall: 87),
+                                   TeamPreviewStar(name: "M. Callender", position: .FS, overall: 84)],
+                           strongestGroup: "TE", weakestGroup: "OL"),
+        "SEA": TeamPreview(difficulty: 3, situation: "Rising", ownerPatience: "Moderate", patienceSeasons: 3, marketDescription: "Deafening home crowd, moderate media market", estimatedOVR: 77, estimatedCapSpace: 24, estimatedDraftPicks: 7, coachingBudget: 41, spendingWillingness: 50, lastSeasonWins: 10, lastSeasonLosses: 7, startingQBName: "J. Vestergaard", startingQBOverall: 79,
+                           stars: [TeamPreviewStar(name: "H. Ellersby", position: .MLB, overall: 87),
+                                   TeamPreviewStar(name: "P. Ashworth", position: .CB, overall: 83)],
+                           strongestGroup: "LB", weakestGroup: "WR"),
     ]
 
     static let allTeams: [LeagueTeamDefinition] = [

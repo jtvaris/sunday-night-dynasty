@@ -1808,6 +1808,121 @@ private struct TeamDetailSheet: View {
         .cardBackground()
     }
 
+    // MARK: - Key Players Card
+
+    /// The two or three men worth knowing besides the quarterback. Empty on a
+    /// source that has no opinion, and then the card is simply not built.
+    @ViewBuilder
+    private var keyPlayersCard: some View {
+        if !preview.stars.isEmpty {
+            VStack(spacing: DSSpacing.xs) {
+                sectionLabel(String(localized: "Key Players"))
+
+                VStack(spacing: DSSpacing.xs) {
+                    ForEach(preview.stars, id: \.self) { star in
+                        HStack(spacing: DSSpacing.sm) {
+                            Text(star.position.rawValue)
+                                .font(DSType.display(DSType.Size.caption, .heavy))
+                                .foregroundStyle(Color.textSecondary)
+                                .frame(width: 30, alignment: .leading)
+
+                            Text(star.name)
+                                .font(DSType.text(DSType.Size.body, .semibold))
+                                .foregroundStyle(Color.textPrimary)
+                                .lineLimit(1)
+
+                            Spacer()
+
+                            Text("\(star.overall)")
+                                .font(DSType.display(DSType.Size.callout, .black))
+                                .foregroundStyle(Color.forRating(star.overall))
+                            Text("OVR")
+                                .font(DSType.display(DSType.Size.micro, .bold))
+                                .foregroundStyle(Color.textTertiary)
+                        }
+                    }
+                }
+            }
+            .padding(DSSpacing.md)
+            .frame(maxWidth: .infinity)
+            .cardBackground()
+        }
+    }
+
+    // MARK: - Position Group Strengths Card
+
+    /// The best and the worst room on the roster. Both halves are true of the
+    /// league the player is about to start: the fixed template derives them
+    /// from its real ratings, and the random league's generator builds a roster
+    /// that backs the claim up rather than one that merely might.
+    @ViewBuilder
+    private var groupStrengthCard: some View {
+        if !preview.strongestGroup.isEmpty, !preview.weakestGroup.isEmpty {
+            VStack(spacing: DSSpacing.xs) {
+                sectionLabel(String(localized: "Roster Shape"))
+
+                HStack(spacing: DSSpacing.sm) {
+                    groupStrengthTile(
+                        icon: "arrow.up.circle.fill",
+                        caption: String(localized: "Strongest Unit"),
+                        group: preview.strongestGroup,
+                        tint: Color.success
+                    )
+                    groupStrengthTile(
+                        icon: "arrow.down.circle.fill",
+                        caption: String(localized: "Weakest Unit"),
+                        group: preview.weakestGroup,
+                        tint: Color.warning
+                    )
+                }
+            }
+            .padding(DSSpacing.md)
+            .frame(maxWidth: .infinity)
+            .cardBackground()
+        }
+    }
+
+    private func groupStrengthTile(
+        icon: String, caption: String, group: String, tint: Color
+    ) -> some View {
+        VStack(spacing: DSSpacing.xxs) {
+            HStack(spacing: DSSpacing.xxs) {
+                Image(systemName: icon)
+                    .font(.system(size: DSType.Size.caption))
+                    .foregroundStyle(tint)
+                Text(caption)
+                    .font(DSType.display(DSType.Size.caption, .semibold))
+                    .foregroundStyle(Color.textTertiary)
+            }
+            Text(group)
+                .font(DSType.display(DSType.Size.title2, .black))
+                .foregroundStyle(tint)
+            Text(Self.groupDescription(group))
+                .font(DSType.display(DSType.Size.micro, .semibold))
+                .foregroundStyle(Color.textTertiary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    /// Spells out the abbreviation the roster screen grades under, so the card
+    /// reads on its own to a player who has not opened a depth chart yet.
+    private static func groupDescription(_ group: String) -> String {
+        switch group {
+        case "QB": return String(localized: "Quarterback")
+        case "RB": return String(localized: "Running Backs")
+        case "WR": return String(localized: "Receivers")
+        case "TE": return String(localized: "Tight Ends")
+        case "OL": return String(localized: "Offensive Line")
+        case "DL": return String(localized: "Defensive Line")
+        case "LB": return String(localized: "Linebackers")
+        case "DB": return String(localized: "Secondary")
+        case "ST": return String(localized: "Special Teams")
+        default:   return ""
+        }
+    }
+
     // MARK: - Division Rivals Card
 
     private var divisionRivals: [LeagueTeamDefinition] {
@@ -1937,6 +2052,8 @@ private struct TeamDetailSheet: View {
             // most decision-critical numbers read first (audit).
             statsRow
             startingQBCard
+            keyPlayersCard
+            groupStrengthCard
             ownerExpectationsCard
             marketMediaCard
             coachingBudgetCard
@@ -1961,6 +2078,8 @@ private struct TeamDetailSheet: View {
                 // Franchise vitals first — most decision-critical numbers (audit).
                 statsRow
                 startingQBCard
+                keyPlayersCard
+                groupStrengthCard
                 ownerExpectationsCard
                 marketMediaCard
                 coachingBudgetCard

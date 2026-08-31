@@ -599,34 +599,201 @@ enum LeagueGenerator {
         )
     }
 
+    /// One blueprint slot, before anybody fills it.
+    private struct RosterSlot {
+        let position: Position
+        /// Running rank at the position, exactly as the old inline depth chart
+        /// produced it — unclamped, because every consumer treats 2 and above
+        /// the same and the raw number is what shipped.
+        let depthIndex: Int
+        /// The abbreviated preview name and the overall this slot is promised
+        /// to, for the named QB1 and the preview's stars. `nil` for an ordinary
+        /// generated player.
+        var promisedName: String?
+        var promisedOverall: Int?
+        /// The talent draw this slot was dealt. See `dealTalent`.
+        var talent: Double = 0
+
+        var groupLabel: String? { LeagueTeamData.positionGroupLabel(for: position) }
+        var isPromised: Bool { promisedOverall != nil }
+    }
+
+    /// How many passes the strongest/weakest repair is allowed. Measured over
+    /// 8 000 generated clubs the claim held immediately on 51 % of them and
+    /// within 5 passes on 99.9 %; the worst case seen was 12. The cap is a
+    /// guard against a pathological draw looping forever, not a working limit.
+    private static let groupClaimPassLimit = 24
+
+    /// How many re-draws a named man gets to land on his promised `overall`.
+    private static let namedPlayerSolvePasses = 8
+
     /// Generates a full 53-man roster with realistic salary tiers.
-    /// The starting QB uses the name and target overall from the TeamPreview data
-    /// so the roster matches what the player saw on the Team Selection screen.
+    ///
+    /// Three things on the Team Selection sheet are promises about a roster
+    /// that does not exist yet, and this is where all three are kept:
+    ///
+    /// 1. **The starting quarterback** — name and overall, as before.
+    /// 2. **The stars** — `TeamPreview.stars`, seeded the same way, each one
+    ///    taking the shallowest free slot at his position.
+    /// 3. **The strongest and weakest position room** — the hard one, because
+    ///    it is a claim about how nine rooms rank against each other and the
+    ///    player can check it on the first roster screen he opens.
+    ///
+    /// (3) is honoured in two steps. First the talent draws are DEALT rather
+    /// than drawn per player: the club's whole depth tier is drawn at once and
+    /// handed out best-first to the strongest room, worst-last to the weakest.
+    /// The multiset of draws per tier is exactly what it always was, so the
+    /// league's rating distribution is untouched — only which man got which
+    /// draw changes. Second, the result is MEASURED with the roster screen's
+    /// own `PositionGradeCalculator` and repaired until the claim is true, so
+    /// the label is verified rather than hoped for.
+    ///
     /// Total salary targets ~$200-230M (80-90% of $255M cap).
     private static func generateRoster(teamID: UUID, teamAbbreviation: String) -> [Player] {
-        var players: [Player] = []
-        var depthChart: [Position: Int] = [:]
-
-        // Look up the team's preview to get the named starting QB
         let preview = LeagueTeamData.previews[teamAbbreviation]
 
+        // --- 1. The 53 slots the blueprint asks for -------------------------
+        var slots: [RosterSlot] = []
+        var depthChart: [Position: Int] = [:]
         for (position, count) in rosterBlueprint {
             for _ in 0..<count {
                 let depthIndex = depthChart[position, default: 0]
-
-                // For the starting QB (depthIndex 0), use the named QB from TeamPreview
-                if position == .QB && depthIndex == 0, let preview = preview {
-                    let player = generateNamedQB(
-                        previewName: preview.startingQBName,
-                        targetOverall: preview.startingQBOverall,
-                        teamID: teamID
-                    )
-                    players.append(player)
-                } else {
-                    let player = generatePlayer(position: position, teamID: teamID, depthIndex: depthIndex)
-                    players.append(player)
-                }
                 depthChart[position] = depthIndex + 1
+                slots.append(RosterSlot(position: position, depthIndex: depthIndex))
+            }
+        }
+
+        // --- 2. The men the preview already named ---------------------------
+        if let preview {
+            if let qb1 = slots.firstIndex(where: { $0.position == .QB && $0.depthIndex == 0 }) {
+                slots[qb1].promisedName = preview.startingQBName
+                slots[qb1].promisedOverall = preview.startingQBOverall
+            }
+            // Blueprint order is depth order, so `first` is the shallowest slot
+            // still free at that position: a named star is a starter unless his
+            // position already has one.
+            for star in preview.stars {
+                guard let slot = slots.firstIndex(where: {
+                    $0.position == star.position && !$0.isPromised
+                }) else { continue }
+                slots[slot].promisedName = star.name
+                slots[slot].promisedOverall = star.overall
+            }
+        }
+
+        // --- 3. Deal the talent draws ---------------------------------------
+        dealTalent(
+            &slots,
+            strongestGroup: preview?.strongestGroup ?? "",
+            weakestGroup: preview?.weakestGroup ?? ""
+        )
+
+        // --- 4. Build the roster --------------------------------------------
+        // Per-group level correction, all zero unless step 5 has to intervene.
+        var groupBias: [String: Double] = [:]
+        func build(_ index: Int) -> Player {
+            let slot = slots[index]
+            if let name = slot.promisedName, let target = slot.promisedOverall {
+                // The QB1 keeps his own seeder: it shapes a quarterback's arm
+                // and pocket play around the target, which the generic path
+                // does not, and nothing here needs to change that.
+                if slot.position == .QB && slot.depthIndex == 0 {
+                    return generateNamedQB(
+                        previewName: name, targetOverall: target, teamID: teamID
+                    )
+                }
+                return generatePlayer(
+                    position: slot.position, teamID: teamID, depthIndex: slot.depthIndex,
+                    talentOverride: slot.talent, previewName: name, targetOverall: target
+                )
+            }
+            let bias = slot.groupLabel.map { groupBias[$0] ?? 0 } ?? 0
+            return generatePlayer(
+                position: slot.position, teamID: teamID, depthIndex: slot.depthIndex,
+                talentOverride: slot.talent + bias
+            )
+        }
+        var players = slots.indices.map { build($0) }
+
+        // --- 5. Make the strongest/weakest claim true ------------------------
+        //
+        // The dealt draws get this right on their own about half the time. The
+        // rest of the time the room's age draws or its attribute draws went the
+        // other way, and the label has to be earned: nudge the room's level by
+        // exactly the shortfall the measurement reports, rebuild it, measure
+        // again. The nudge is applied to the room, never to a man the card has
+        // already promised a number for.
+
+        /// The nine rooms, graded exactly as the roster screen grades them.
+        func starterGrades() -> [String: Int] {
+            var grades: [String: Int] = [:]
+            for group in LeagueTeamData.positionGroups {
+                let room = players.filter { group.positions.contains($0.position) }
+                grades[group.label] = PositionGradeCalculator
+                    .calculatePositionGrades(players: room, positions: group.positions)
+                    .starterOVR
+            }
+            return grades
+        }
+        /// A room can be moved only if it has a first-team slot that is not
+        /// already promised. The QB room never does — its one starter is the
+        /// named quarterback — which is why a club whose passer outrates every
+        /// other room has "QB" authored as its strength rather than something
+        /// the generator would have to lift a defensive line above 97 to keep.
+        func movable(_ label: String) -> Bool {
+            slots.contains {
+                $0.depthIndex == 0 && !$0.isPromised && $0.groupLabel == label
+            }
+        }
+        func rebuild(_ label: String) {
+            for index in slots.indices
+            where slots[index].groupLabel == label && !slots[index].isPromised {
+                players[index] = build(index)
+            }
+        }
+
+        let strongest = preview?.strongestGroup ?? ""
+        let weakest = preview?.weakestGroup ?? ""
+        if !strongest.isEmpty, !weakest.isEmpty {
+            let labels = LeagueTeamData.positionGroups.map(\.label)
+            for _ in 0..<groupClaimPassLimit {
+                let grades = starterGrades()
+                let strongestGrade = grades[strongest] ?? 0
+                let weakestGrade = grades[weakest] ?? 0
+                let bestRival = labels.filter { $0 != strongest }
+                    .compactMap { grades[$0] }.max() ?? 0
+                let worstRival = labels.filter { $0 != weakest }
+                    .compactMap { grades[$0] }.min() ?? 0
+                let strongestHolds = strongestGrade > bestRival
+                let weakestHolds = weakestGrade < worstRival
+                if strongestHolds && weakestHolds { break }
+
+                if !strongestHolds {
+                    if movable(strongest) {
+                        groupBias[strongest, default: 0] += Double(bestRival - strongestGrade) + 1
+                        rebuild(strongest)
+                    } else if let rival = labels
+                        .filter({ $0 != strongest && movable($0) })
+                        .max(by: { (grades[$0] ?? 0) < (grades[$1] ?? 0) }),
+                        (grades[rival] ?? 0) >= strongestGrade {
+                        // The strongest room is all promised men, so it cannot
+                        // be lifted. Bring the room that outranks it down.
+                        groupBias[rival, default: 0] -= Double((grades[rival] ?? 0) - strongestGrade) + 1
+                        rebuild(rival)
+                    }
+                }
+                if !weakestHolds {
+                    if movable(weakest) {
+                        groupBias[weakest, default: 0] -= Double(weakestGrade - worstRival) + 1
+                        rebuild(weakest)
+                    } else if let rival = labels
+                        .filter({ $0 != weakest && movable($0) })
+                        .min(by: { (grades[$0] ?? 0) < (grades[$1] ?? 0) }),
+                        (grades[rival] ?? 0) <= weakestGrade {
+                        groupBias[rival, default: 0] += Double(weakestGrade - (grades[rival] ?? 0)) + 1
+                        rebuild(rival)
+                    }
+                }
             }
         }
 
@@ -650,10 +817,78 @@ enum LeagueGenerator {
         return players
     }
 
+    /// Deals one `talentLevelShift` draw to every slot, best-first to the room
+    /// the preview calls strongest and worst-last to the one it calls weakest.
+    ///
+    /// This is the whole trick behind the group claim, and the reason it costs
+    /// the league nothing. The draws are still one per slot, still from
+    /// `talentLevelShift` at the slot's own depth tier, so **the multiset of
+    /// draws a club takes is exactly the multiset it always took** — the league
+    /// mean, the spread and the §8 quality pyramid are untouched by
+    /// construction. Only the pairing changes: the club's best draws land in
+    /// the room the card calls its strength instead of wherever they fell.
+    ///
+    /// A promised man draws too and then discards it. That is deliberate: an
+    /// authored star CONSUMES one of his club's talent draws rather than being
+    /// handed out on top of them, so naming three players does not quietly make
+    /// every club in the league better than the generator intended.
+    ///
+    /// With no groups named (an abbreviation the preview table does not know)
+    /// the draws are handed out in blueprint order, which is what the old
+    /// per-player draw did.
+    private static func dealTalent(
+        _ slots: inout [RosterSlot],
+        strongestGroup: String,
+        weakestGroup: String
+    ) {
+        // Tiers, not raw ranks: `talentLevelShift` reads 2-and-above as one
+        // bucket, so those slots draw from one distribution and are dealt as one.
+        for tier in 0...2 {
+            let indices = slots.indices.filter { min(slots[$0].depthIndex, 2) == tier }
+            guard !indices.isEmpty else { continue }
+            var draws = indices.map { _ in talentLevelShift(depthIndex: tier) }
+            guard !strongestGroup.isEmpty || !weakestGroup.isEmpty else {
+                for (draw, slot) in zip(draws, indices) { slots[slot].talent = draw }
+                continue
+            }
+            draws.sort(by: >)
+            let strongest = indices.filter { slots[$0].groupLabel == strongestGroup }
+            let weakest = indices.filter { slots[$0].groupLabel == weakestGroup }
+            // Shuffled so the seven rooms in between keep the spread they have
+            // always had rather than being ordered by the blueprint.
+            let rest = indices.filter {
+                slots[$0].groupLabel != strongestGroup && slots[$0].groupLabel != weakestGroup
+            }.shuffled()
+            for (draw, slot) in zip(draws, strongest + rest + weakest) {
+                slots[slot].talent = draw
+            }
+        }
+    }
+
     /// Internal (not private) since R32: `WeekAdvancer`'s roster-floor pass
     /// reuses it to generate street free agents when the FA pool runs dry.
-    static func generatePlayer(position: Position, teamID: UUID, depthIndex: Int) -> Player {
-        let name = RandomNameGenerator.randomName()
+    ///
+    /// - Parameters:
+    ///   - talentOverride: the `talentLevelShift` term to use instead of drawing
+    ///     one. `generateRoster` draws a club's whole tier at once so it can
+    ///     hand the best draws to the room the preview calls its strongest —
+    ///     the draws are the same draws either way, only their owners change.
+    ///   - previewName: an abbreviated scouting name ("D. Ashgrove") to build
+    ///     this man under, instead of a random one. Expanded to a real given
+    ///     name first; see `nameBehind(previewName:)`.
+    ///   - targetOverall: the `overall` this man must come out at, for a player
+    ///     the preview card has already promised a rating for. The level is
+    ///     solved against the shipped `Player.overall`, not approximated.
+    static func generatePlayer(
+        position: Position,
+        teamID: UUID,
+        depthIndex: Int,
+        talentOverride: Double? = nil,
+        previewName: String? = nil,
+        targetOverall: Int? = nil
+    ) -> Player {
+        let name = previewName.map { nameBehind(previewName: $0) }
+            ?? RandomNameGenerator.randomName()
         let age = randomAge(for: position)
         let yearsPro = max(0, age - Int.random(in: 21...23))
         // The player's own level = where his age puts him + who he is. The
@@ -661,23 +896,14 @@ enum LeagueGenerator {
         // Both are folded into ONE shift before it is applied, so the position
         // skills, the physicals and the mentals all move together and `overall`
         // moves with them roughly 1:1.
-        let levelShift = ageLevelShift(age: age, position: position)
-            + talentLevelShift(depthIndex: depthIndex)
-        let ageShift = Int(levelShift.rounded())
-        let posAttrs = randomPositionAttributes(
-            for: position, depthIndex: depthIndex, ageShift: ageShift
-        )
+        var levelShift = ageLevelShift(age: age, position: position)
+            + (talentOverride ?? talentLevelShift(depthIndex: depthIndex))
         // Bodies come from the shared per-position priors so veterans and draft
         // prospects are drawn from one distribution. Previously every player at
         // every position got `PhysicalAttributes.random()` (uniform 40...99), so
         // a centre was as likely to be a 95-speed athlete as a cornerback.
-        // `levelShift` (not `ageShift`) — the physical and mental priors take a
-        // Double, so they get the exact level; only the position-skill range,
-        // which is an integer range, has to round.
-        let physical = PositionPhysicalProfile.sample(
-            for: position,
-            levelShift: veteranLevelShift(depthIndex: depthIndex) + levelShift
-        )
+        // The position-skill range takes the ROUNDED shift because it is an
+        // integer range; the physical and mental priors take the exact Double.
         // Mental follows the same route as physical (phase-2 plan §2.2/§2.7):
         // the shared position-shaped priors instead of `MentalAttributes.random()`
         // (uniform 40...99). The level is anchored to `baseLevel` (69.5 — the
@@ -685,11 +911,25 @@ enum LeagueGenerator {
         // awareness tilt survives while league-average mental — and therefore
         // league-average `overall` — is unchanged. See the arithmetic in
         // `veteranLevelShift`.
-        let mental = PositionPhysicalProfile.sampleMental(
-            for: position,
-            targetAverage: PositionPhysicalProfile.baseLevel
-                + veteranLevelShift(depthIndex: depthIndex) + levelShift
-        )
+        func attributeBlocks(
+            at shift: Double
+        ) -> (PositionAttributes, PhysicalAttributes, MentalAttributes) {
+            (
+                randomPositionAttributes(
+                    for: position, depthIndex: depthIndex, ageShift: Int(shift.rounded())
+                ),
+                PositionPhysicalProfile.sample(
+                    for: position,
+                    levelShift: veteranLevelShift(depthIndex: depthIndex) + shift
+                ),
+                PositionPhysicalProfile.sampleMental(
+                    for: position,
+                    targetAverage: PositionPhysicalProfile.baseLevel
+                        + veteranLevelShift(depthIndex: depthIndex) + shift
+                )
+            )
+        }
+        let (posAttrs, physical, mental) = attributeBlocks(at: levelShift)
         let personality = PlayerPersonality(
             archetype: PersonalityArchetype.allCases.randomElement()!,
             motivation: Motivation.allCases.randomElement()!
@@ -714,6 +954,30 @@ enum LeagueGenerator {
             contractYearsRemaining: contractYears,
             annualSalary: 750
         )
+        // A man the preview card has already put a number on. `overall` moves
+        // with the level roughly 1:1, so correcting the level by the residual
+        // and re-drawing converges in two or three passes; the best of the
+        // passes is kept so the loop can only improve on the first draw. The
+        // level is solved against the SHIPPED `overall`, never against a
+        // re-typed copy of its 0.5/0.3/0.2 blend.
+        if let targetOverall {
+            var bestError = abs(player.overall - targetOverall)
+            var bestBlocks = (posAttrs, physical, mental)
+            var pass = 0
+            while bestError != 0 && pass < namedPlayerSolvePasses {
+                pass += 1
+                levelShift += Double(targetOverall - player.overall)
+                let blocks = attributeBlocks(at: levelShift)
+                player.positionAttributes = blocks.0
+                player.physical = blocks.1
+                player.mental = blocks.2
+                let error = abs(player.overall - targetOverall)
+                if error < bestError { bestError = error; bestBlocks = blocks }
+            }
+            player.positionAttributes = bestBlocks.0
+            player.physical = bestBlocks.1
+            player.mental = bestBlocks.2
+        }
         let salary = realisticSalary(
             for: position, overall: player.overall, age: age,
             yearsPro: yearsPro, depthIndex: depthIndex,
@@ -1162,13 +1426,17 @@ enum LeagueGenerator {
         return nil
     }
 
-    /// Creates the starting QB using the name and target overall from TeamPreview.
-    /// The preview name format is "F. Last" (e.g., "S. Osgood"); a multi-initial
-    /// form ("C.J. Osgood") parses the same way. A lone initial is expanded into
-    /// a real given name (`expandedGivenName`) before it is persisted.
-    private static func generateNamedQB(previewName: String, targetOverall: Int, teamID: UUID) -> Player {
-        // Parse the preview name: split on last space to get firstName and lastName.
-        // Examples: "S. Osgood" -> ("S.", "Osgood"), "C.J. Osgood" -> ("C.J.", "Osgood")
+    /// The real name behind a preview's abbreviated one.
+    ///
+    /// The preview format is "F. Last" ("S. Osgood"); a multi-initial form
+    /// ("C.J. Osgood") parses the same way. The preview string is a
+    /// scouting-blurb abbreviation, not a name, and storing it made the
+    /// franchise QB the one man in the league whose first name was a letter —
+    /// "M. Wimberly" on the roster, in KEY PLAYERS, in every press item,
+    /// forever. The surname is what the preview card promises; the given name
+    /// behind the initial is ours to draw. Every named man the previews carry —
+    /// the QB1 and the star list alike — comes through here for that reason.
+    static func nameBehind(previewName: String) -> (first: String, last: String) {
         let parts = previewName.split(separator: " ", maxSplits: .max, omittingEmptySubsequences: true)
         let previewFirst: String
         let lastName: String
@@ -1179,12 +1447,12 @@ enum LeagueGenerator {
             previewFirst = String(parts.first ?? "J.")
             lastName = "Doe"
         }
-        // The preview string is a scouting-blurb abbreviation, not a name, and
-        // storing it made the franchise QB the one man in the league whose
-        // first name is a letter — "M. Wimberly" on the roster, in KEY PLAYERS,
-        // in every press item, forever. The surname is what the preview card
-        // promises; the given name behind the initial is ours to draw.
-        let firstName = expandedGivenName(fromInitial: previewFirst) ?? previewFirst
+        return (expandedGivenName(fromInitial: previewFirst) ?? previewFirst, lastName)
+    }
+
+    /// Creates the starting QB using the name and target overall from TeamPreview.
+    private static func generateNamedQB(previewName: String, targetOverall: Int, teamID: UUID) -> Player {
+        let (firstName, lastName) = nameBehind(previewName: previewName)
 
         // Generate physical and mental attributes that produce the target overall.
         // Physicals come from the shared QB priors shifted so their average

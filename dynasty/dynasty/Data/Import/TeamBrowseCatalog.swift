@@ -89,7 +89,12 @@ struct TeamBrowseCatalog {
                 lastSeasonLosses: preview.lastSeasonLosses,
                 startingQBName: preview.startingQBName,
                 startingQBOverall: preview.startingQBOverall,
-                isLocked: preview.isLocked
+                isLocked: preview.isLocked,
+                // Authored, and the generator keeps its word about all three:
+                // see `LeagueGenerator.generateRoster`.
+                stars: preview.stars,
+                strongestGroup: preview.strongestGroup,
+                weakestGroup: preview.weakestGroup
             )
         }
         return TeamBrowseCatalog(
@@ -178,6 +183,7 @@ struct TeamBrowseCatalog {
         }()
 
         let qb = startingQB(team)
+        let rooms = roomGrades(team)
         // Cap space the import will really produce, to within the $750K salary
         // floor's rounding: same helper, same seed, same draw.
         let capUsage = LeagueTemplateImporter.capTarget(
@@ -211,8 +217,57 @@ struct TeamBrowseCatalog {
             lastSeasonPlayoffResult: playoffResult,
             startingQBName: qb.map({ shortName($0) }) ?? "—",
             startingQBOverall: qb?.ratingTarget ?? 0,
-            isLocked: base?.isLocked ?? false
+            isLocked: base?.isLocked ?? false,
+            // Real ratings beat authored ones wherever real ratings exist. The
+            // static table's stars and group pair are a promise the random
+            // league's generator has to keep; here the roster is already
+            // written, so the sheet reads it instead of guessing at it.
+            stars: stars(team, excluding: qb),
+            strongestGroup: rooms.max(by: { $0.grade < $1.grade })?.label ?? "",
+            weakestGroup: rooms.min(by: { $0.grade < $1.grade })?.label ?? ""
         )
+    }
+
+    /// The two or three names worth knowing besides the quarterback, best
+    /// first. The QB1 is skipped for the same reason the authored table skips
+    /// him: the sheet gives him a card of his own directly above this list.
+    private static func stars(
+        _ team: LeagueTemplate.TeamTemplate,
+        excluding qb: LeagueTemplate.PlayerTemplate?
+    ) -> [TeamPreviewStar] {
+        team.players
+            .filter { $0.id != qb?.id }
+            .sorted { $0.ratingTarget > $1.ratingTarget }
+            .prefix(3)
+            .compactMap { player in
+                guard let position = Position(rawValue: player.pos) else { return nil }
+                return TeamPreviewStar(
+                    name: shortName(player), position: position, overall: player.ratingTarget
+                )
+            }
+    }
+
+    /// Starter-average rating per position room, by the roster screen's rule:
+    /// the group's best N by rating, where N is
+    /// `PositionGradeCalculator.starterCount` — the same arithmetic
+    /// `LeagueGenerator` checks its own claim against, so the two league
+    /// sources answer "which room is strongest" the same way.
+    ///
+    /// Ordered, not a dictionary: two rooms can grade out identically and the
+    /// sheet must name the same one on every launch.
+    private static func roomGrades(
+        _ team: LeagueTemplate.TeamTemplate
+    ) -> [(label: String, grade: Int)] {
+        LeagueTeamData.positionGroups.compactMap { group in
+            let wanted = Set(group.positions.map(\.rawValue))
+            let room = team.players
+                .filter { wanted.contains($0.pos) }
+                .map(\.ratingTarget)
+                .sorted(by: >)
+            guard !room.isEmpty else { return nil }
+            let starters = Array(room.prefix(PositionGradeCalculator.starterCount(for: group.positions)))
+            return (group.label, starters.reduce(0, +) / starters.count)
+        }
     }
 
     /// `Team.salaryCap`'s default, in thousands.
