@@ -1923,3 +1923,331 @@ enum InboxEngine {
         return "$\(thousands)K"
     }
 }
+
+// MARK: - Replies
+//
+// The tray printed a season's worth of letters that put questions to the coach
+// and gave him no way to answer one. This extension is the answer side: a small
+// fixed catalogue of replies, the system each one feeds, and the apply-site
+// that books it.
+//
+// ## Rule 1 — no reply without a system behind it
+//
+// A canned line that goes nowhere would be worse than an honestly read-only
+// tray, so a sender gets a reply control only where a system already exists to
+// take the movement:
+//
+//   * `.owner`      -> `Owner.satisfaction` (owner trust), the field
+//                      `OwnerPersonaEngine` reads for job security, the season
+//                      verdict and the firing threshold.
+//   * `.media`      -> `LegacyTracker.mediaReputation`, the field the press
+//                      conference already writes.
+//   * coordinators  -> `Player.morale` across that coordinator's unit, the
+//                      field the sim reads directly.
+//
+// `.scout`, `.leagueOffice`, `.playerAgent` and `.developmentStaff` get NO
+// reply control. There is no scouting-trust or agent-goodwill number in this
+// codebase for a reply to move, and an agent's letter is settled in contract
+// negotiation rather than in the tray.
+//
+// ## Rule 2 — the deltas
+//
+// Every reply books exactly ±1 on exactly one system. Each number is set below
+// a movement that same system already makes for a real event:
+//
+//   * **Owner trust ±1.** The smallest non-zero `ownerSatisfaction` cell in
+//     `PressEngine.situationAdjustment` is ±2, and
+//     `OwnerPersonaEngine.respond(to:comply:owner:)` books +3 for complying
+//     with a whim, −4/−5 for defying one. A private email is a smaller thing
+//     than a public answer and a far smaller thing than a promise about the
+//     roster, so it moves less than either.
+//   * **Media reputation ±1.** Exactly the smallest non-zero `mediaPerception`
+//     cell in `PressEngine.situationAdjustment` — a joke to a routine question,
+//     −1 — against a table that runs to −10 for dodging a crisis. One inbox
+//     quote is worth the most throwaway thing a coach can say on a podium.
+//   * **Unit morale ±1.** `PressEngine.rosterMoraleDelta` lands ±1 on every man
+//     for a mixed press session and ±5 (`PressEngine.moraleTeamCap`) for a
+//     perfect one; `LiveGameEngine.applyMatchupMorale` gives +3 to the three
+//     men who actually won their matchups on Sunday. A reply lands ±1 on one
+//     unit only — under the weakest press session, well under one game.
+//
+// ## Rule 3 — the season budget
+//
+// Without a ceiling the eight owner letters a season would be worth +8 for
+// agreeing with all of them, which is the whole bonus
+// `OwnerPersonaEngine.evaluateSeason` pays for an outstanding year. So each
+// channel books only its first few replies of the season:
+//
+//   * owner 3            -> a season of email diplomacy is worth at most ±3,
+//                           i.e. one whim compliance (`respond`, +3).
+//   * media 3            -> at most ±3, under one strong podium answer — the
+//                           same table runs to +7 and −10 on a single answer.
+//   * each coordinator 2 -> at most ±2 on that unit, under the +3 one player
+//                           earns for winning his matchups in a single game.
+//
+// Past the budget the letter carries no reply buttons and says why, rather than
+// offering a control that would book nothing.
+
+extension InboxEngine {
+
+    /// The one system a reply feeds. One channel per reply — a reply never
+    /// books two movements.
+    enum ReplyChannel: String, CaseIterable {
+        case ownerTrust
+        case mediaReputation
+        case offenseMorale
+        case defenseMorale
+
+        /// How this channel reads on screen.
+        var systemName: String {
+            switch self {
+            case .ownerTrust:       return "Owner trust"
+            case .mediaReputation:  return "Media reputation"
+            case .offenseMorale:    return "Offense morale"
+            case .defenseMorale:    return "Defense morale"
+            }
+        }
+
+        /// How many replies on this channel book a movement per league season.
+        /// See "Rule 3" above for where each ceiling comes from.
+        var repliesPerSeason: Int {
+            switch self {
+            case .ownerTrust:                    return 3
+            case .mediaReputation:               return 3
+            case .offenseMorale, .defenseMorale: return 2
+            }
+        }
+
+        /// The unit a morale channel moves; `nil` for the two channels that are
+        /// not a unit.
+        var unitSide: PositionSide? {
+            switch self {
+            case .offenseMorale:                return .offense
+            case .defenseMorale:                return .defense
+            case .ownerTrust, .mediaReputation: return nil
+            }
+        }
+    }
+
+    /// One thing the coach can say back, and the single movement saying it books.
+    struct ReplyOption: Identifiable, Equatable {
+        /// Stable across copy edits — it is what `InboxMessage.sentReplyID`
+        /// stores and what `channelOfReply(id:)` reads back.
+        let id: String
+        /// The reply itself, as it reads on the button.
+        let label: String
+        let channel: ReplyChannel
+        /// Always +1 or −1. See "Rule 2" above.
+        let delta: Int
+
+        /// What this reply will move, shown on the button BEFORE it is sent so
+        /// the coach is never guessing what he is buying.
+        var forecast: String {
+            "\(channel.systemName) \(InboxEngine.signed(delta))"
+        }
+    }
+
+    /// `+1` / `-1`. A caller reporting a clamped no-op says so in words rather
+    /// than printing a bare `0`.
+    static func signed(_ value: Int) -> String {
+        value > 0 ? "+\(value)" : "\(value)"
+    }
+
+    // MARK: Catalogue
+
+    /// The replies this letter can take, before availability is checked.
+    ///
+    /// Empty for every sender with no system behind it, for a letter whose
+    /// decision is made on another screen, and for a letter already answered —
+    /// one reply per letter.
+    static func replyOptions(for message: InboxMessage) -> [ReplyOption] {
+        guard !message.decisionHandledElsewhere, !message.hasReplied else { return [] }
+
+        switch message.sender {
+        case .owner:
+            // Only the owner's own directives — the generators file nothing
+            // else under his name, and this keeps a future forwarded notice
+            // from growing an answer to nobody.
+            guard message.category == .ownerDirective else { return [] }
+            return [
+                ReplyOption(
+                    id: "owner.agree",
+                    label: "Understood \u{2014} you'll get exactly that.",
+                    channel: .ownerTrust,
+                    delta: 1
+                ),
+                ReplyOption(
+                    id: "owner.pushBack",
+                    label: "Respectfully, I'm going to do this my way.",
+                    channel: .ownerTrust,
+                    delta: -1
+                )
+            ]
+
+        case .media:
+            // A press request is a question. A wire report is not: the trade
+            // wire and the comeback bulletin are `.media` too and file under
+            // `.leagueNotice`, and there is nothing in either to answer.
+            guard message.category == .mediaRequest else { return [] }
+            return [
+                ReplyOption(
+                    id: "media.onRecord",
+                    label: "Give them the quote \u{2014} on the record.",
+                    channel: .mediaReputation,
+                    delta: 1
+                ),
+                ReplyOption(
+                    id: "media.noComment",
+                    label: "No comment. We'll let the tape talk.",
+                    channel: .mediaReputation,
+                    delta: -1
+                )
+            ]
+
+        case .offensiveCoordinator:
+            return unitReplies(channel: .offenseMorale, prefix: "offense")
+
+        case .defensiveCoordinator:
+            return unitReplies(channel: .defenseMorale, prefix: "defense")
+
+        case .scout, .leagueOffice, .playerAgent, .developmentStaff:
+            // No reply control, on purpose — see "Rule 1" above.
+            return []
+        }
+    }
+
+    private static func unitReplies(channel: ReplyChannel, prefix: String) -> [ReplyOption] {
+        [
+            ReplyOption(
+                id: "\(prefix).back",
+                label: "It's your call. Run it \u{2014} you have my backing.",
+                channel: channel,
+                delta: 1
+            ),
+            ReplyOption(
+                id: "\(prefix).overrule",
+                label: "We're changing this. My call, not yours.",
+                channel: channel,
+                delta: -1
+            )
+        ]
+    }
+
+    // MARK: Season budget
+
+    /// Replies already booked on `channel` this season.
+    ///
+    /// Counted off the tray itself: a sent reply carries its option id and the
+    /// season it was sent in, so there is no second ledger to keep in step with
+    /// the mailbox.
+    ///
+    /// A letter the coach never answered counts as nothing here, and as nothing
+    /// anywhere else — see the note on `InboxMessage.sentReplyID`.
+    ///
+    /// Counting off the tray means a letter leaving the tray would hand its
+    /// reply back, so the two ways out are both closed for the season that is
+    /// being counted: `InboxView.isReplyLocked` refuses to delete a letter
+    /// answered this season (archiving it is still fine), and `Career.inbox`
+    /// keeps the newest 200, which one season's mail does not reach.
+    static func repliesBooked(
+        in messages: [InboxMessage],
+        channel: ReplyChannel,
+        season: Int
+    ) -> Int {
+        messages.filter { message in
+            guard message.repliedSeason == season, let id = message.sentReplyID else { return false }
+            return channelOfReply(id: id) == channel
+        }.count
+    }
+
+    /// Replies left on `channel` this season, floored at 0.
+    static func repliesRemaining(
+        in messages: [InboxMessage],
+        channel: ReplyChannel,
+        season: Int
+    ) -> Int {
+        max(0, channel.repliesPerSeason - repliesBooked(in: messages, channel: channel, season: season))
+    }
+
+    /// The channel a stored reply id belongs to. Kept beside the catalogue so a
+    /// new option cannot be added without being given a channel here.
+    static func channelOfReply(id: String) -> ReplyChannel? {
+        switch id {
+        case "owner.agree", "owner.pushBack":     return .ownerTrust
+        case "media.onRecord", "media.noComment": return .mediaReputation
+        case "offense.back", "offense.overrule":  return .offenseMorale
+        case "defense.back", "defense.overrule":  return .defenseMorale
+        default:                                  return nil
+        }
+    }
+
+    /// The line shown in place of the reply buttons once the season's budget on
+    /// this channel is spent. The tray says why there is no control rather than
+    /// showing one that books nothing.
+    static func budgetSpentNote(channel: ReplyChannel, senderName: String) -> String {
+        switch channel {
+        case .ownerTrust:
+            return "You've already sent \(senderName) \(channel.repliesPerSeason) replies this season. He'll read another one; it won't change what he thinks of you."
+        case .mediaReputation:
+            return "\(channel.repliesPerSeason) quotes to the beat writers is your ration for the season. Another one is noise in the same news cycle."
+        case .offenseMorale, .defenseMorale:
+            return "You've weighed in on \(senderName)'s work \(channel.repliesPerSeason) times this season. The room has taken the message."
+        }
+    }
+
+    // MARK: Apply
+
+    /// Books a reply and returns the receipt — the exact movement that landed,
+    /// in the words the tray shows the coach.
+    ///
+    /// Returns `nil` when the movement cannot be booked at all (no owner row on
+    /// the save, an empty unit). A caller must not offer an option this would
+    /// refuse: see `InboxView.availableReplyOptions`.
+    ///
+    /// `roster` is the USER's club only — the same rule
+    /// `PressConferenceEngine.applyRoomEffects` states. A word to your own
+    /// coordinator has no business in another team's locker room.
+    static func applyReply(
+        _ option: ReplyOption,
+        owner: Owner?,
+        career: Career,
+        roster: [Player]
+    ) -> String? {
+        switch option.channel {
+        case .ownerTrust:
+            guard let owner else { return nil }
+            let before = owner.satisfaction
+            owner.satisfaction = max(0, min(100, before + option.delta))
+            let landed = owner.satisfaction - before
+            guard landed != 0 else {
+                return "Owner trust unchanged \u{2014} \(owner.name) is already at \(before) of 100."
+            }
+            return "Owner trust \(signed(landed)) \u{2014} \(owner.name) \(before) \u{2192} \(owner.satisfaction)."
+
+        case .mediaReputation:
+            let before = career.legacy.mediaReputation
+            let landed = career.legacy.adjustMediaReputation(by: option.delta)
+            guard landed != 0 else {
+                return "Media reputation unchanged \u{2014} already at \(before), the end of the scale."
+            }
+            return "Media reputation \(signed(landed)) \u{2014} \(before) \u{2192} \(career.legacy.mediaReputation) (\(career.legacy.reputationLabel))."
+
+        case .offenseMorale, .defenseMorale:
+            guard let side = option.channel.unitSide else { return nil }
+            let unit = roster.filter { $0.position.side == side }
+            guard !unit.isEmpty else { return nil }
+            var moved = 0
+            for player in unit {
+                // The same 1…100 rails `PressConferenceEngine.applyRoomEffects`
+                // holds morale to.
+                let before = player.morale
+                player.morale = max(1, min(100, before + option.delta))
+                if player.morale != before { moved += 1 }
+            }
+            guard moved > 0 else {
+                return "\(option.channel.systemName) unchanged \u{2014} the whole unit is already at the end of the scale."
+            }
+            return "\(option.channel.systemName) \(signed(option.delta)) \u{2014} \(moved) player\(moved == 1 ? "" : "s")."
+        }
+    }
+}

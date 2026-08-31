@@ -245,6 +245,15 @@ enum OwnerPersonaEngine {
     }
 
     /// Inbox message announcing a fresh whim.
+    ///
+    /// `decisionHandledElsewhere` is the one thing this letter says that the
+    /// others do not: the coach answers a whim in Owner Relations, where
+    /// `respond(to:comply:owner:)` books +3 satisfaction for complying and −4
+    /// for defying (−5 when the owner's patience is 3 or less).
+    /// The tray's own reply control (`InboxEngine.replyOptions`) would book the
+    /// same yes-or-no a second time on the same field, so this letter carries
+    /// no reply buttons — it carries the call to action that leads to the
+    /// screen where the answer actually counts.
     static func whimInboxMessage(whim: OwnerWhim, ownerName: String) -> InboxMessage {
         InboxMessage(
             sender: .owner(name: ownerName),
@@ -261,7 +270,8 @@ enum OwnerPersonaEngine {
             date: "Week \(whim.week), Season \(whim.seasonYear)",
             category: .ownerDirective,
             actionRequired: true,
-            actionDestination: .ownerMeeting
+            actionDestination: .ownerMeeting,
+            decisionHandledElsewhere: true
         )
     }
 

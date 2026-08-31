@@ -85,6 +85,21 @@ nonisolated struct LegacyTracker: Codable, Equatable {
         }
     }
 
+    /// Move media reputation by `delta`, held to the same -100…100 range
+    /// `applyPressConferenceResult` clamps to.
+    ///
+    /// The clamp lived only inside that one method, so the second writer to
+    /// this field — `InboxEngine.applyReply`, which books a media reply — would
+    /// have had to repeat it. Returns the movement that actually landed, which
+    /// is 0 at either rail; a caller that reports a number to the user must
+    /// report this one and not what it asked for.
+    @discardableResult
+    mutating func adjustMediaReputation(by delta: Int) -> Int {
+        let before = mediaReputation
+        mediaReputation = max(-100, min(100, before + delta))
+        return mediaReputation - before
+    }
+
     /// Record a new achievement and add its points to the total.
     mutating func recordAchievement(_ achievement: LegacyAchievement) {
         achievements.append(achievement)
