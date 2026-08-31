@@ -1394,18 +1394,29 @@ struct CombineResultsView<Header: View>: View {
     /// rounded times cannot have one: two men at 4.46 and 4.54 both print
     /// "~4.5", and a composite built on that would rank them identically while
     /// looking like a precise number. Attending the combine is what buys it.
+    ///
+    /// THE EMPTY STATE IS THE GATE'S, NOT THE MAN'S. A blank cell in this table
+    /// carries a specific claim — `ProspectMeasurableCell` splits it in two:
+    /// "?" for nobody has measured him where you could see it, an em-dash (or
+    /// "DNP") for he was there and did not run that drill. A composite withheld
+    /// by fidelity is neither. Printing the dash told a broadcast-only club
+    /// that a man who ran all six drills did not test, with his six real
+    /// numbers sitting immediately to the right of the lie. "?" is the glyph
+    /// that already means "no reading you can see", so the gate wears it and
+    /// the dash goes back to meaning what it means.
     private func athleticismCell(
         prospect: CollegeProspect,
         showsPercentile: Bool,
         dash: String
     ) -> some View {
         let score = showsPercentile ? percentilePools.athleticism(for: prospect) : nil
+        let empty = showsPercentile ? dash : "?"
         let tier = score.map { ProspectMeasurableTier.label(for: $0) }
         // The 1 pt is matched to `drillCell`: this cell sits directly beside
         // six of them and its number/phrase pair has to land on the same two
         // baselines, or the whole drill block reads misaligned.
         return VStack(spacing: 1) {  // ds-lint:allow(spacing) matched to drillCell
-            Text(score.map { "\($0)" } ?? dash)
+            Text(score.map { "\($0)" } ?? empty)
                 .font(.caption.weight(.bold).monospacedDigit())
                 .foregroundStyle(tier?.color ?? Color.textTertiary)
             if let tier {
@@ -1416,14 +1427,27 @@ struct CombineResultsView<Header: View>: View {
         }
         .frame(width: CombineW.ath)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(athleticismAccessibilityLabel(prospect: prospect, score: score))
+        .accessibilityLabel(athleticismAccessibilityLabel(
+            prospect: prospect, score: score, showsPercentile: showsPercentile
+        ))
     }
 
     /// The composite, spoken. The cell itself is a bare number over a clipped
     /// phrase, so VoiceOver has to say what the number is OF.
-    private func athleticismAccessibilityLabel(prospect: CollegeProspect, score: Int?) -> String {
+    ///
+    /// Its two empty states are spoken apart for the same reason the glyphs are
+    /// drawn apart: "no reading" over a broadcast row said the man had not
+    /// tested, when what had happened was that the club had not bought the
+    /// precision a composite needs.
+    private func athleticismAccessibilityLabel(
+        prospect: CollegeProspect,
+        score: Int?,
+        showsPercentile: Bool
+    ) -> String {
         guard let score else {
-            return "Athleticism, no reading"
+            return showsPercentile
+                ? "Athleticism, no reading"
+                : "Athleticism, not available on broadcast numbers. Send your scouts to the combine."
         }
         let phrase = ProspectMeasurableTier.label(for: score).text
         return "Athleticism \(score) of 99 for a \(prospect.position.rawValue), \(phrase) of this class"
