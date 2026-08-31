@@ -1163,8 +1163,18 @@ enum PlayerDevelopmentEngine {
     /// "he is what he is". The plan said 1; measured against the stage-5 growth
     /// curve (a pre-peak player gains ~1.2 OVR per offseason on the prime-years
     /// tail alone) that made the plateau tag essentially unreachable — 20 % of
-    /// careers against the §6 30-50 % band. 2 points over two seasons is the
-    /// honest reading of "settled into his role".
+    /// careers against the §6 30-50 % band.
+    ///
+    /// **The value is 3, and two doc comments used to say otherwise** (this one
+    /// said "2 points over two seasons", `isPlateaued`'s said "at most 1 OVR").
+    /// Corrected in place, not deleted, because the wrong figures have been
+    /// quoted: `isPlateaued` gates on
+    /// `inputs.latestOverall - inputs.overallTwoSeasonsAgo <= plateauOverallGain`,
+    /// i.e. the OVR a man put on across the TWO completed seasons the
+    /// `PlayerSeasonHistory` rows span, so the constant reads "at most +3 OVR
+    /// in two years". Only the copy moves here — the number itself is load-
+    /// bearing for §6.3a, which the `career` rig measures at 38.4-38.8 % inside
+    /// its [30,50] band on this value.
     static let plateauOverallGain = 3
 
     /// Chance that a plateaued player who catches a break actually breaks out.
@@ -1179,7 +1189,8 @@ enum PlayerDevelopmentEngine {
 
     /// "He is what he is." A player with 2+ pro seasons whose realization has
     /// been under `plateauRealizationThreshold` two offseasons running AND who
-    /// has gained at most 1 OVR across them has settled into his role.
+    /// has gained at most `plateauOverallGain` (= 3) OVR across them has
+    /// settled into his role.
     ///
     /// Nothing new is persisted for this (plan §2.5): the previous offseason's
     /// R is reconstructed from the player's own attributes and the playing-time
