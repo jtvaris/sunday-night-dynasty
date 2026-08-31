@@ -3388,6 +3388,16 @@ enum WeekAdvancer {
             // (career, team, season): a re-entered phase is a fetch and a return.
             TeamSeasonArchiveBuilder.record(career: career, teams: teams, modelContext: modelContext)
 
+            // …and the coaching half of the same freeze, in the same window and
+            // for the same reason: this is the last moment every coach still
+            // holds the seat he actually coached. It reads the archive rows the
+            // line above just wrote, so a coach's season line and his club's
+            // can never disagree. Unlike the archive there is NO catch-up pass
+            // — a coach row remembers only his current job, so a season missed
+            // here is gone (`CoachSeasonHistoryBuilder`). Idempotent per
+            // (career, season).
+            CoachSeasonHistoryBuilder.record(career: career, modelContext: modelContext)
+
         case .proBowl:
             // Simulate All-Star Game (AFC vs NFC, simple random result)
             let proBowlScore = simulateGameScore()

@@ -78,6 +78,36 @@ enum DynastySchemaV1: VersionedSchema {
     }
 }
 
+// MARK: - V2 — coach season history
+
+/// V1 plus one new table, `CoachSeasonHistory`.
+///
+/// Adding a `@Model` type is one of the free changes (`§4.1`, and the decision
+/// tree's "Add a new `@Model` type → **No stage**"). It gets a version of its
+/// own anyway, because V1 is a frozen snapshot of what was on disk and must not
+/// be edited in place — a new table is still a different set of tables, and the
+/// store's version stamp should say so. The stage below is `.lightweight`
+/// precisely because there is nothing to write: no existing row changes shape,
+/// and the new table starts empty.
+///
+/// There is deliberately no backfill of the new table, here or in the self-heal
+/// hook. A `Coach` row carries only his CURRENT job, so a past season cannot be
+/// reconstructed from it; the book opens at the next season rollover and
+/// `CoachCareerHistoryCard` says so rather than inventing a career.
+enum DynastySchemaV2: VersionedSchema {
+
+    static var versionIdentifier: Schema.Version { Schema.Version(1, 1, 0) }
+
+    /// THE model list. Spelled as V1's list plus the addition, so the two can
+    /// never drift: a type added to V1 by a future reader of this file cannot
+    /// go missing from the version the app actually opens.
+    static var models: [any PersistentModel.Type] {
+        DynastySchemaV1.models + [
+            CoachSeasonHistory.self,
+        ]
+    }
+}
+
 // MARK: - Migration plan
 
 /// The ordered history of the save format.
@@ -100,11 +130,16 @@ enum DynastySchemaV1: VersionedSchema {
 enum DynastyMigrationPlan: SchemaMigrationPlan {
 
     static var schemas: [any VersionedSchema.Type] {
-        [DynastySchemaV1.self]
+        [DynastySchemaV1.self, DynastySchemaV2.self]
     }
 
     static var stages: [MigrationStage] {
-        []      // nothing to migrate yet: V1 is the baseline.
+        [
+            // V1 -> V2 adds the `CoachSeasonHistory` table and changes no
+            // existing row. Nothing to write, so the stage is declared purely
+            // so the version history has an entry per adjacent pair.
+            .lightweight(fromVersion: DynastySchemaV1.self, toVersion: DynastySchemaV2.self),
+        ]
     }
 }
 

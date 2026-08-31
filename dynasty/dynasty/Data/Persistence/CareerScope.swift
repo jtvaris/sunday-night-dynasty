@@ -40,6 +40,7 @@ extension VoluntaryWorkout: CareerScoped {}
 extension HardKnocksEvent: CareerScoped {}
 extension TradeRecord: CareerScoped {}
 extension TeamSeasonArchive: CareerScoped {}
+extension CoachSeasonHistory: CareerScoped {}
 
 // MARK: - CareerScope
 
@@ -51,10 +52,11 @@ extension TeamSeasonArchive: CareerScoped {}
 /// one, so it never needs adoption. It IS covered by `cascadeDelete` and
 /// `debugCounts`, which handle it explicitly.
 ///
-/// `TeamSeasonArchive` (TODO §5.2) is `CareerScoped` but likewise absent from
-/// the adoption pass: the table was born after this wave, so an unstamped row
-/// cannot exist in any store. It is covered by `cascadeDelete` and both audits,
-/// which is where a forgotten stamp would actually show up.
+/// `TeamSeasonArchive` (TODO §5.2) and `CoachSeasonHistory` are `CareerScoped`
+/// but likewise absent from the adoption pass: both tables were born after this
+/// wave, so an unstamped row cannot exist in any store. They are covered by
+/// `cascadeDelete` and both audits, which is where a forgotten stamp would
+/// actually show up.
 enum CareerScope {
 
     /// Schema version written to `Career.schemaBackfillVersion` once a save's
@@ -299,6 +301,7 @@ enum CareerScope {
         plan(HardKnocksEvent.self, "HardKnocksEvent", #Predicate { $0.careerID == cid })
         plan(TradeRecord.self, "TradeRecord", #Predicate { $0.careerID == cid })
         plan(TeamSeasonArchive.self, "TeamSeasonArchive", #Predicate { $0.careerID == cid })
+        plan(CoachSeasonHistory.self, "CoachSeasonHistory", #Predicate { $0.careerID == cid })
 
         for run in deletes { run() }
 
@@ -389,6 +392,7 @@ enum CareerScope {
         wipe(HardKnocksEvent.self, "HardKnocksEvent")
         wipe(TradeRecord.self, "TradeRecord")
         wipe(TeamSeasonArchive.self, "TeamSeasonArchive")
+        wipe(CoachSeasonHistory.self, "CoachSeasonHistory")
         wipe(Career.self, "Career")
 
         try? context.save()
@@ -458,6 +462,7 @@ enum CareerScope {
         count("HardKnocksEvent", #Predicate<HardKnocksEvent> { $0.careerID == nil })
         count("TradeRecord", #Predicate<TradeRecord> { $0.careerID == nil })
         count("TeamSeasonArchive", #Predicate<TeamSeasonArchive> { $0.careerID == nil })
+        count("CoachSeasonHistory", #Predicate<CoachSeasonHistory> { $0.careerID == nil })
         return parts.joined(separator: " ")
     }
 
@@ -521,6 +526,7 @@ enum CareerScope {
         audit(HardKnocksEvent.self, "HardKnocksEvent")
         audit(TradeRecord.self, "TradeRecord")
         audit(TeamSeasonArchive.self, "TeamSeasonArchive")
+        audit(CoachSeasonHistory.self, "CoachSeasonHistory")
 
         let header = "CAREERID-AUDIT [\(label)] careers=\(careers.count) "
             + careers.map { "\($0.playerName)/\($0.currentSeason)" }.joined(separator: ", ")
