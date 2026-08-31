@@ -795,7 +795,9 @@ final class CRLeague {
         case .olCoach, .dlCoach:       return ["playerDevelopment", "discipline"]
         case .lbCoach, .dbCoach:       return ["playerDevelopment", "gamePlanning"]
         case .strengthCoach:           return ["playerDevelopment", "discipline", "motivation"]
-        case .other:                   return ["playerDevelopment"]
+        // The shipped table groups the medical roles with `.headTrainer` on one
+        // line and returns exactly this, so the stub's catch-all joins them.
+        case .teamDoctor, .physio, .other: return ["playerDevelopment"]
         }
     }
 

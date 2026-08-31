@@ -12,12 +12,17 @@
 #     development sources (PlayerDevelopmentEngine / PlayerRetirementEngine /
 #     MotivationState / InjuryRecord / InjuryType / CampEnums) for `career`, and
 #     SeasonPhase for `lockerroom` — all pure engine, no hand-typed constants.
-#   • AdaptiveOpponentAIExtract.swift REGENERATED mechanically from the shipped
-#     Engine/Match/AdaptiveOpponentAI.swift by awk-stripping only the 4
-#     persona-hint functions (which need DCPersona/OCPersona and carry ZERO
-#     balance constants). Every tuning literal — paKeyCompletion 0.035,
-#     paKeyBigPlay 2.0, runGrandBiteCap 1.80, … — flows through untouched from
-#     the repo bytes. It is NEVER hand-copied, so it cannot drift.
+#   • AdaptiveOpponentAI.swift copied VERBATIM. It used to be an awk strip of the
+#     4 persona-hint functions (which need DCPersona/OCPersona); the coachedgame
+#     scenario stages CoordinatorPersona.swift, so the strip is gone and every
+#     tuning literal — paKeyCompletion 0.035, paKeyBigPlay 2.0, runGrandBiteCap
+#     1.80, … — is now a sha-verified repo byte rather than a survived transform.
+#   • LiveGameEngineExtract.swift REGENERATED from Engine/Match/LiveGameEngine.swift
+#     by awk-stripping only persist(to:context:teamsByID:) — the post-whistle
+#     SwiftData write-back, the file's only reference to Game / ModelContext /
+#     WeekAdvancer, and the holder of ZERO balance constants. The prep-boost
+#     clamps, the half-strength momentum fold and simToEnd's 500-play cap are all
+#     guarded byte-for-byte (see §10c).
 #   • SimPlayer.swift ASSEMBLED from driver/SimPlayer.harness.swift, with the
 #     storage decls and the computed-property block spliced VERBATIM from the
 #     repo SimPlayer.swift.
@@ -31,9 +36,9 @@
 # file every build and a post-slice check fails the build if a single tuning
 # line differs from the repo. See README.md.
 #
-# Refuses to proceed if any repo source is missing, if a verbatim copy's sha
-# ever diverges from the repo, or if the extract still references DCPersona /
-# OCPersona or a tuning constant drifted.
+# Refuses to proceed if any repo source is missing, if a verbatim copy's sha ever
+# diverges from the repo, if an extract mangled a tuning constant, or if the repo
+# has stopped defining a lever a scenario reports on.
 # ============================================================================
 set -euo pipefail
 
@@ -126,6 +131,14 @@ VERBATIM_SOURCES=(
   # bounded at 4.0 OVR, and a re-typed bound is exactly the drift this script
   # exists to prevent.
   "Engine/Draft/GMTaste.swift"
+  # --- coached game (scenario `coachedgame`) -------------------------------------
+  # The opponent DC/OC play-calling personas. `LiveGameEngine` holds one of each
+  # and hands them to `AdaptiveOpponentAI.scaledThreshold` / `counterShare`, so a
+  # coached game whose personas were stubbed would measure a different opponent
+  # than the app runs. Pure Foundation + `Playbook` + the `Coach` stub, so it
+  # copies VERBATIM — and its arrival is what lets `AdaptiveOpponentAI.swift`
+  # below stop being sliced at all.
+  "Engine/Match/CoordinatorPersona.swift"
 )
 AI_SOURCE="$ENGINE/Engine/Match/AdaptiveOpponentAI.swift"
 SIM_SOURCE="$ENGINE/Engine/Simulation/SimPlayer.swift"
@@ -173,6 +186,19 @@ WORKLOAD_SOURCE="$ENGINE/Engine/Camp/WorkloadEngine.swift"
 # read against the loads the scheduler can actually emit, so re-typing 0.45 /
 # 0.85 / 0.55 here would measure a camp the app does not run.
 WEEKADVANCER_SOURCE="$ENGINE/Engine/Simulation/WeekAdvancer.swift"
+# --- coached sim-to-final staging (scenario `coachedgame`) --------------------
+# The COACHED path — the one the user actually plays — has never been in this
+# rig: `GameSimulator.simulate` is the quick sim, and nothing here compiled
+# `LiveGameEngine`, whose `simToEnd()` is what a "sim to final" runs. Both files
+# arrive whole (LiveGameEngine minus its SwiftData persistence tail, see §10b),
+# because the two prep boosts the scenario measures — `audibleBoost` /
+# `defReadBoost`, clamped at construction and folded into per-play momentum at
+# half strength — are engine constants, and a re-typed clamp would measure a
+# ceiling the app does not have.
+LIVEGAME_SOURCE="$ENGINE/Engine/Match/LiveGameEngine.swift"
+MATCHUP_SOURCE="$ENGINE/Engine/Match/MatchupResolver.swift"
+FACILITY_SOURCE="$ENGINE/Engine/Camp/FacilityEngine.swift"
+COACHEDSCENARIO_TEMPLATE="$HARNESS_DIR/driver/CoachedGameScenario.harness.swift"
 
 # --- Preflight: refuse to build if any source is missing -------------------
 missing=0
@@ -191,7 +217,8 @@ for f in "$PLAYER_SOURCE" "$COACHING_SOURCE" "$VERSATILITY_SOURCE" "$CONTRACT_SO
          "$FOCUS_SOURCE" "$DRAFTENGINE_SOURCE" "$CAREERSCENARIO_TEMPLATE" \
          "$PRACTICESQUAD_SOURCE" "$CAMPROSTER_SOURCE" \
          "$SEEDRNG_SOURCE" "$TRADEVALUE_SOURCE" "$PERCEPTIONSCENARIO_TEMPLATE" \
-         "$LOCKERROOM_SOURCE" "$WORKLOAD_SOURCE" "$WEEKADVANCER_SOURCE"; do
+         "$LOCKERROOM_SOURCE" "$WORKLOAD_SOURCE" "$WEEKADVANCER_SOURCE" \
+         "$LIVEGAME_SOURCE" "$MATCHUP_SOURCE" "$FACILITY_SOURCE" "$COACHEDSCENARIO_TEMPLATE"; do
   [ -f "$f" ] || { echo "  MISSING: $f" >&2; missing=1; }
 done
 [ "$missing" -eq 0 ] || die "one or more canonical sources are missing — refusing to build."
@@ -220,57 +247,38 @@ for rel in "${VERBATIM_SOURCES[@]}"; do
   echo "    $base"
 done
 
-# --- 2) AdaptiveOpponentAIExtract.swift (mechanical slice) ------------------
-echo "==> regenerating AdaptiveOpponentAIExtract.swift from repo (awk strip of persona-hint fns)"
-EXTRACT="$SRC_OUT/AdaptiveOpponentAIExtract.swift"
-SLICE="$(mktemp)"
-awk '
-  BEGIN { skip = 0 }
-  skip == 0 && /^[[:space:]]*static func (defenseKeyHint|exactCallHint|categoryKeyHint|offenseAdjustHint)\(/ {
-    skip = 1; depth = 0; seen = 0
-  }
-  skip == 1 {
-    l1 = $0; o = gsub(/[{]/, "X", l1)
-    l2 = $0; c = gsub(/[}]/, "X", l2)
-    depth += o - c
-    if (o > 0) seen = 1
-    if (seen == 1 && depth <= 0) skip = 0
-    next
-  }
-  { print }
-' "$AI_SOURCE" > "$SLICE"
+# --- 2) AdaptiveOpponentAI.swift (VERBATIM — was an awk strip) ---------------
+# HISTORY: this file used to be staged as `AdaptiveOpponentAIExtract.swift`, an
+# awk strip of the 4 persona-hint funcs (defenseKeyHint / exactCallHint /
+# categoryKeyHint / offenseAdjustHint), because they need DCPersona/OCPersona and
+# the harness did not compile `CoordinatorPersona.swift`. The `coachedgame`
+# scenario stages that file (VERBATIM_SOURCES, above) because `LiveGameEngine`
+# holds both personas — so the strip has no reason to exist any more and the
+# whole file now arrives as repo bytes. One less transform, one less thing that
+# can mangle a constant.
+echo "==> copying AdaptiveOpponentAI.swift from repo (VERBATIM — no transform)"
+EXTRACT="$SRC_OUT/AdaptiveOpponentAI.swift"
+cp "$AI_SOURCE" "$EXTRACT"
+[ "$(sha "$AI_SOURCE")" = "$(sha "$EXTRACT")" ] || die "AdaptiveOpponentAI.swift copy sha mismatch (copy corrupted)."
 
-# 2a) The SLICED CODE must no longer reference the persona types (guard runs on
-#     the pure slice — the harness-authored header below intentionally names them).
-if grep -qE 'DCPersona|OCPersona' "$SLICE"; then
-  grep -nE 'DCPersona|OCPersona' "$SLICE" >&2
-  die "extract still references DCPersona/OCPersona — the awk strip failed."
-fi
-
-# 2b) ANTI-DRIFT GUARD: every balance-constant line in the repo file must appear
-#     byte-identical in the slice. The persona funcs hold no such lines, so a
-#     mismatch means the slice mangled a constant — refuse.
+# 2a) DIE-WATCH: the tuning constants the harness header prints and every
+#     scenario measures through must still be defined by the repo file. A sha
+#     match already proves the copy is byte-identical, so this guard is aimed at
+#     the other failure mode — the repo renaming or deleting a lever the rig
+#     reports on, which must fail the SYNC rather than surface as a stale number.
 CONST_RE='^[[:space:]]*static (let [A-Za-z].*=|func (paKeyCompletion|paKeyBigPlay|runKeyYardBite|runKeyStuffBonus|catPivot|catAlpha)\()'
-if ! diff <(grep -E "$CONST_RE" "$AI_SOURCE") <(grep -E "$CONST_RE" "$SLICE") > /dev/null; then
-  echo "  --- constant drift (repo <, slice >) ---" >&2
-  diff <(grep -E "$CONST_RE" "$AI_SOURCE") <(grep -E "$CONST_RE" "$SLICE") >&2 || true
-  die "a balance constant differs between the repo file and the extract."
-fi
-CONST_COUNT="$(grep -cE "$CONST_RE" "$SLICE")"
-
-# 2c) Assemble: harness header (documents the transform) + verified slice.
-{
-  echo "// GENERATED by sync_sources.sh — DO NOT EDIT."
-  echo "// Source: dynasty/dynasty/Engine/Match/AdaptiveOpponentAI.swift (sha $(sha "$AI_SOURCE"))"
-  echo "// Transform: awk-strip of the 4 persona-hint funcs (defenseKeyHint / exactCallHint /"
-  echo "//            categoryKeyHint / offenseAdjustHint) — they hold NO balance constants;"
-  echo "//            every tuning literal below is the repo byte ($CONST_COUNT lines verified)."
-  echo ""
-  cat "$SLICE"
-} > "$EXTRACT"
-rm -f "$SLICE"; SLICE=""
-echo "    AdaptiveOpponentAIExtract.swift  ($CONST_COUNT tuning lines verified byte-identical to repo)"
-printf 'EXTRACT    %s  build/src/AdaptiveOpponentAIExtract.swift  <=  %s  dynasty/dynasty/Engine/Match/AdaptiveOpponentAI.swift  (persona-hint fns stripped; %s consts verified)\n' \
+CONST_COUNT="$(grep -cE "$CONST_RE" "$EXTRACT")"
+[ "$CONST_COUNT" -ge 20 ] || die "only $CONST_COUNT AdaptiveOpponentAI tuning lines found — expected the full lever set."
+for k in paKeyCompletion paKeyBigPlay runKeyYardBite runKeyStuffBonus; do
+  grep -qE "^[[:space:]]*static func $k\(" "$EXTRACT" || die "AdaptiveOpponentAI no longer defines $k — the harness header reads it."
+done
+# The 4 persona-hint funcs are the reason the strip existed; `LiveGameEngine`
+# calls all four, so their disappearance has to fail here, loudly.
+for k in defenseKeyHint exactCallHint categoryKeyHint offenseAdjustHint; do
+  grep -qE "^[[:space:]]*static func $k\(" "$EXTRACT" || die "AdaptiveOpponentAI no longer defines $k — LiveGameEngine calls it."
+done
+echo "    AdaptiveOpponentAI.swift  ($CONST_COUNT tuning lines, repo bytes)"
+printf 'VERBATIM   %s  build/src/AdaptiveOpponentAI.swift  <=  %s  dynasty/dynasty/Engine/Match/AdaptiveOpponentAI.swift  (%s tuning lines present)\n' \
   "$(sha "$EXTRACT")" "$(sha "$AI_SOURCE")" "$CONST_COUNT" >> "$MANIFEST"
 
 # --- 3) SimPlayer.swift (template + repo splices) ---------------------------
@@ -959,24 +967,43 @@ echo "    CampRosterConstantsExtract.swift"
 # returned its input would make every harness game agree with the engine by
 # accident, which is precisely the stale-shim failure this script exists to
 # prevent. Sliced rather than hand-typed for the same reason.
-echo "==> regenerating MedicalEngineExtract.swift from repo (grep of dressed())"
+#
+# The `coachedgame` scenario widened this slice by two members. `LiveGameEngine`
+# multiplies its per-play injury risk by BOTH `workloadRiskMultiplier` and
+# `facilityRiskMultiplier` — the same two terms the quick sim's weekly
+# `injuryCheck` applies — and an injured starter is a scoring term, so a coached
+# game whose injury risk was missing those factors would measure a different
+# roster attrition than the app runs. Sliced, never re-typed, for the usual
+# reason: the 1.06 / 0.92 medical-wing rungs live in FacilityEngine (§8n).
+echo "==> regenerating MedicalEngineExtract.swift from repo (awk keep-list slice)"
 MEDICAL_OUT="$SRC_OUT/MedicalEngineExtract.swift"
-MEDICAL_FN="$(awk '/^[[:space:]]*static func dressed\(_ roster: \[Player\]\) -> \[Player\] \{/,/^[[:space:]]*\}$/' "$MEDICAL_SOURCE")"
-printf '%s\n' "$MEDICAL_FN" | grep -q 'isInjured' \
-  || die "MedicalEngine.dressed slice lost its isInjured filter."
+cat > "$DEVANCHORS" <<'EOF'
+static func dressed\(
+static func workloadRiskMultiplier\(
+static func facilityRiskMultiplier\(
+EOF
+keeplist_slice "$MEDICAL_SOURCE" "$DEVANCHORS" "$DEVSLICE"
+verbatim_guard "$MEDICAL_SOURCE" "$DEVSLICE"
+grep -q 'isInjured' "$DEVSLICE" || die "MedicalEngine.dressed slice lost its isInjured filter."
+grep -q 'player.workloadStatus.injuryMultiplier' "$DEVSLICE" \
+  || die "MedicalEngine slice lost the camp-workload injury term the coached game multiplies by."
+grep -q 'FacilityEngine.injuryRiskMultiplier' "$DEVSLICE" \
+  || die "MedicalEngine slice lost the medical-wing injury term the coached game multiplies by."
 {
   echo "// GENERATED by sync_sources.sh — DO NOT EDIT."
   echo "// Source: dynasty/dynasty/Engine/Medical/MedicalEngine.swift (sha $(sha "$MEDICAL_SOURCE"))"
-  echo "// Transform: verbatim slice of dressed(), the availability filter"
-  echo "//            GameSimulator applies before it snapshots a roster."
+  echo "// Transform: awk KEEP-LIST slice of dressed() — the availability filter"
+  echo "//            GameSimulator applies before it snapshots a roster — plus the"
+  echo "//            two injury-risk multipliers LiveGameEngine folds into its"
+  echo "//            per-play roll. Every line is a repo byte."
   echo ""
   echo "import Foundation"
   echo ""
   echo "enum MedicalEngine {"
-  echo "$MEDICAL_FN"
+  cat "$DEVSLICE"
   echo "}"
 } > "$MEDICAL_OUT"
-printf 'EXTRACT    %s  build/src/MedicalEngineExtract.swift  <=  %s  dynasty/dynasty/Engine/Medical/MedicalEngine.swift  (grep of dressed())\n' \
+printf 'EXTRACT    %s  build/src/MedicalEngineExtract.swift  <=  %s  dynasty/dynasty/Engine/Medical/MedicalEngine.swift  (keep-list slice: dressed + injury multipliers)\n' \
   "$(sha "$MEDICAL_OUT")" "$(sha "$MEDICAL_SOURCE")" >> "$MANIFEST"
 echo "    MedicalEngineExtract.swift"
 
@@ -1211,14 +1238,11 @@ grep -q 'private static' "$DEVSLICE" && die "CampSchedule slice still carries a 
   echo ""
   echo "import Foundation"
   echo ""
-  echo "// HARNESS SCAFFOLDING (carries no math): the stub CoachRole in GameModels.swift"
-  echo "// models the roles the sim and the development stack read, and \`.physio\` is not"
-  echo "// one of them. computeRecoveryRate names it only as the FALLBACK lookup behind"
-  echo "// \`.strengthCoach\`; the lockerroom scenario builds strength coaches or an empty"
-  echo "// staff, so this alias exists to let the repo bytes compile and is never the"
-  echo "// branch taken. Declared here, next to its only caller, rather than in the"
-  echo "// shared stub file."
-  echo "extension CoachRole { static var physio: CoachRole { .other } }"
+  echo "// NOTE: \`.physio\` used to be aliased to \`.other\` here, because the stub"
+  echo "// CoachRole in GameModels.swift did not model it. The \`coachedgame\` scenario"
+  echo "// gave the stub the real case (LiveGameEngine looks up a physio for its live"
+  echo "// injury roll), so the alias is gone and computeRecoveryRate's FALLBACK lookup"
+  echo "// behind \`.strengthCoach\` now reads the same case the app does."
   echo ""
   echo "enum WeekAdvancer {"
   cat "$DEVSLICE"
@@ -1426,6 +1450,274 @@ fi
 printf 'HARNESS    %s  build/src/PerceptionScenario.swift  <=  (harness-owned scenario) driver/PerceptionScenario.harness.swift  %s\n' \
   "$(sha "$PERCEPTIONSCENARIO_OUT")" "$(sha "$PERCEPTIONSCENARIO_TEMPLATE")" >> "$MANIFEST"
 echo "    PerceptionScenario.swift  (AI draft fog diagnostic — reaches/steals/|err| by persona)"
+
+# =============================================================================
+# 10) Coached sim-to-final staging (scenario `coachedgame`)
+# =============================================================================
+# WHY: `simToEnd()` loops `step()` behind a 500-play safety cap with no score
+# check, and the two opponent-prep boosts a coached game carries — `audibleBoost`
+# (clamped 0…0.20) and `defReadBoost` (clamped 0…0.15) — are folded into per-play
+# momentum at half strength. Nothing measured the resulting scoreline, so nothing
+# could say whether a 60-21 coached blowout is inside the engine's own
+# distribution or outside it. Everything below exists to put the SHIPPED coached
+# path in front of the same measurement rig the quick sim has had since round 5.
+
+# The coached engine reads four members off the harness model stubs that no
+# other scenario needs. They carry no math (two medical roles it looks staff up
+# by, and two presentation strings), but their absence would fail as a wall of
+# compiler errors 3 000 lines into a generated file, so it fails here instead.
+# `.physio` in particular used to be aliased to `.other` in CampScheduleExtract;
+# it is a real case now, and that alias is gone.
+for member in 'case teamDoctor' 'case physio' 'var firstName: String' 'var lastName: String' 'var abbreviation: String'; do
+  grep -qF "$member" "$GAMEMODELS_TEMPLATE" \
+    || die "driver/GameModels.harness.swift no longer declares \"$member\" — LiveGameEngine reads it."
+done
+if grep -qF 'static var physio: CoachRole' "$SRC_OUT/CampScheduleExtract.swift"; then
+  die "CampScheduleExtract still aliases .physio — it now clashes with the real case on the CoachRole stub."
+fi
+
+# --- 10a) FacilityEngineExtract.swift ----------------------------------------
+# `MedicalEngine.facilityRiskMultiplier` resolves through this engine, so the
+# medical-wing rungs (1.06 / 1.0 / 0.92) have to be repo bytes. The club-lookup
+# `levels(forPlayer:)` cannot come across — it fetches a `Team` through a
+# `ModelContext` with a `#Predicate` — but its FIRST statement is a guard that
+# returns the neutral `.standard` for a player with no `teamID`, and the harness
+# `Player` stub has no team. So the harness shim below returns exactly what the
+# shipped function returns for harness data, and BOTH halves of that claim are
+# guarded: the repo guard line must still be there, and the stub must still
+# declare `teamID` as an always-nil optional.
+echo "==> regenerating FacilityEngineExtract.swift from repo (awk keep-list slice)"
+FACILITY_OUT="$SRC_OUT/FacilityEngineExtract.swift"
+cat > "$DEVANCHORS" <<'EOF'
+enum Track: String, CaseIterable, Identifiable, Codable \{
+static func clampTier\(
+struct Levels: Equatable \{
+static func injuryRiskMultiplier\(
+EOF
+keeplist_slice "$FACILITY_SOURCE" "$DEVANCHORS" "$DEVSLICE"
+verbatim_guard "$FACILITY_SOURCE" "$DEVSLICE"
+FACILITY_CONSTS="$(grep -E '^[[:space:]]*static let (minTier|maxTier) =' "$FACILITY_SOURCE")"
+for k in minTier maxTier; do
+  printf '%s\n' "$FACILITY_CONSTS" | grep -qE "static let $k =" \
+    || die "FacilityEngine constant $k not found in the repo file."
+done
+grep -q 'static let standard = Levels(training: 2, medical: 2, recovery: 2)' "$DEVSLICE" \
+  || die "FacilityEngine slice lost the neutral all-tier-2 Levels — the harness shim returns it."
+# The three medical-wing rungs, individually. A silent re-anchoring here changes
+# how often a coached game loses a starter, which is a scoring term.
+for rung in '1:  return 1.06' '2:  return 1.0' 'default: return 0.92'; do
+  grep -qF "$rung" "$DEVSLICE" \
+    || die "FacilityEngine slice lost the medical-wing injury rung \"$rung\"."
+done
+# The claim the harness shim rests on: a team-less player reads neutral.
+grep -qF 'guard let teamID = player.teamID else { return .standard }' "$FACILITY_SOURCE" \
+  || die "FacilityEngine.levels(forPlayer:) no longer short-circuits a team-less player to .standard — the harness shim is no longer the shipped answer."
+grep -qE '^[[:space:]]*var teamID: UUID\? = nil$' "$GAMEMODELS_TEMPLATE" \
+  || die "the harness Player stub no longer declares an always-nil teamID — the FacilityEngine shim is no longer the shipped answer."
+{
+  echo "// GENERATED by sync_sources.sh — DO NOT EDIT."
+  echo "// Source: dynasty/dynasty/Engine/Camp/FacilityEngine.swift (sha $(sha "$FACILITY_SOURCE"))"
+  echo "// Transform: awk KEEP-LIST slice of the tier ladder and the medical-wing"
+  echo "//            injury multiplier. Every line above the MARK is a repo byte;"
+  echo "//            the club lookup below it is the documented harness shim."
+  echo ""
+  echo "import Foundation"
+  echo ""
+  echo "enum FacilityEngine {"
+  echo "$FACILITY_CONSTS"
+  echo ""
+  cat "$DEVSLICE"
+  echo "    // MARK: - Harness shim (verified equivalent, see sync_sources.sh §10a)"
+  echo "    //"
+  echo "    // The shipped \`levels(forPlayer:)\` fetches the player's club through a"
+  echo "    // ModelContext. Its first statement returns \`.standard\` for a player with"
+  echo "    // no \`teamID\`, and every harness Player has none — so this IS the shipped"
+  echo "    // answer for harness data, not an approximation. sync_sources.sh fails if"
+  echo "    // either half of that stops being true."
+  echo "    static func levels(forPlayer player: Player) -> Levels { .standard }"
+  echo "}"
+} > "$FACILITY_OUT"
+printf 'EXTRACT    %s  build/src/FacilityEngineExtract.swift  <=  %s  dynasty/dynasty/Engine/Camp/FacilityEngine.swift  (keep-list slice + guarded club-lookup shim)\n' \
+  "$(sha "$FACILITY_OUT")" "$(sha "$FACILITY_SOURCE")" >> "$MANIFEST"
+echo "    FacilityEngineExtract.swift"
+
+# --- 10b) MatchupResolverExtract.swift ---------------------------------------
+# `FieldUnit` (the 11 starters each side puts on the field) and `PlayMatchups`
+# are what `LiveGameEngine` substitutes, fatigues and injures through, so the
+# file comes across whole EXCEPT its trailing `extension SimPlayer`, whose two
+# display helpers (`displayNumber` / `shortName`) SimPlayer.harness.swift has
+# carried as a hand-copy since before this file was staged. Redeclaring them
+# would be ambiguous, so the extension is stripped — and the hand-copy it
+# shadows is now guarded against the repo for the first time.
+echo "==> regenerating MatchupResolverExtract.swift from repo (awk strip of the SimPlayer extension)"
+MATCHUP_OUT="$SRC_OUT/MatchupResolverExtract.swift"
+SLICE="$(mktemp)"
+awk '
+  BEGIN { skip = 0 }
+  skip == 0 && /^extension SimPlayer \{$/ { skip = 1; depth = 0; seen = 0 }
+  skip == 1 {
+    l1 = $0; o = gsub(/[{]/, "X", l1)
+    l2 = $0; c = gsub(/[}]/, "X", l2)
+    depth += o - c
+    if (o > 0) seen = 1
+    if (seen == 1 && depth <= 0) skip = 0
+    next
+  }
+  { print }
+' "$MATCHUP_SOURCE" > "$SLICE"
+if grep -qE '^[[:space:]]*var (displayNumber|shortName):' "$SLICE"; then
+  die "the MatchupResolver SimPlayer extension was not stripped — it would clash with SimPlayer.harness.swift."
+fi
+grep -q 'struct FieldUnit' "$SLICE"    || die "MatchupResolver strip lost FieldUnit."
+grep -q 'struct PlayMatchups' "$SLICE" || die "MatchupResolver strip lost PlayMatchups."
+grep -q 'enum MatchupResolver' "$SLICE" || die "MatchupResolver strip lost the resolver itself."
+verbatim_guard "$MATCHUP_SOURCE" "$SLICE"
+# DIE-WATCH on the hand-copy this strip shadows: the two helpers in
+# driver/SimPlayer.harness.swift must still match the repo bodies. `shortName` is
+# copied whole; `displayNumber` carries one extra defensive `default:` arm the
+# repo's exhaustive switch has no need of, so it is the JERSEY-RANGE table — the
+# part that could actually drift — that is diffed.
+JERSEY_RE='^[[:space:]]*case \.[A-Z].*range = [0-9]+\.\.\.[0-9]+$'
+if ! diff <(grep -E "$JERSEY_RE" "$MATCHUP_SOURCE") \
+          <(grep -E "$JERSEY_RE" "$SIM_TEMPLATE" | grep -v 'range = 1\.\.\.99') > /dev/null; then
+  diff <(grep -E "$JERSEY_RE" "$MATCHUP_SOURCE") \
+       <(grep -E "$JERSEY_RE" "$SIM_TEMPLATE" | grep -v 'range = 1\.\.\.99') >&2 || true
+  die "the displayNumber jersey table in driver/SimPlayer.harness.swift no longer matches MatchupResolver.swift."
+fi
+# `shortName` is three lines long and copied whole, so each repo line must be
+# present verbatim in the template.
+SHORTNAME_BODY="$(sed -n '/^    var shortName: String {$/,/^    }$/p' "$MATCHUP_SOURCE" | sed '1d;$d')"
+[ -n "$SHORTNAME_BODY" ] || die "could not read MatchupResolver's shortName body — repo anchors changed."
+while IFS= read -r line; do
+  [ -n "${line//[[:space:]]/}" ] || continue
+  grep -qxF "$line" "$SIM_TEMPLATE" \
+    || die "the shortName body in driver/SimPlayer.harness.swift no longer matches MatchupResolver.swift (missing: $line)"
+done <<< "$SHORTNAME_BODY"
+{
+  echo "// GENERATED by sync_sources.sh — DO NOT EDIT."
+  echo "// Source: dynasty/dynasty/Engine/Match/MatchupResolver.swift (sha $(sha "$MATCHUP_SOURCE"))"
+  echo "// Transform: awk-strip of the trailing \`extension SimPlayer\` (displayNumber /"
+  echo "//            shortName), which SimPlayer.harness.swift already carries and"
+  echo "//            sync_sources.sh now diffs against this file. Everything else is"
+  echo "//            the repo byte."
+  echo ""
+  cat "$SLICE"
+} > "$MATCHUP_OUT"
+rm -f "$SLICE"; SLICE=""
+printf 'EXTRACT    %s  build/src/MatchupResolverExtract.swift  <=  %s  dynasty/dynasty/Engine/Match/MatchupResolver.swift  (SimPlayer display extension stripped)\n' \
+  "$(sha "$MATCHUP_OUT")" "$(sha "$MATCHUP_SOURCE")" >> "$MANIFEST"
+echo "    MatchupResolverExtract.swift"
+
+# --- 10c) LiveGameEngineExtract.swift ----------------------------------------
+# The coached engine, whole, MINUS `persist(to:context:teamsByID:)` — the
+# SwiftData write-back tail (final score onto the `Game` row, team records,
+# season/postseason stat accumulation, injury persistence). That function is the
+# ONLY thing in the file that touches `Game` / `ModelContext` / `WeekAdvancer` /
+# `MedicalEngine.applyInjury`, it runs strictly AFTER the whistle, and it holds
+# no balance math — nothing it does can change a scoreline. Everything the
+# scenario measures (the boost clamps, the half-strength momentum fold, the
+# per-play injury roll, the 500-play cap in `simToEnd`) is a repo byte.
+echo "==> regenerating LiveGameEngineExtract.swift from repo (awk strip of persist())"
+LIVEGAME_OUT="$SRC_OUT/LiveGameEngineExtract.swift"
+SLICE="$(mktemp)"
+# The doc-comment block above `persist` goes with it (the awk buffers `///`
+# lines and drops the buffer when the signature arrives), so the strip does not
+# leave an orphan doc comment attached to the next declaration.
+awk '
+  BEGIN { skip = 0; nb = 0 }
+  skip == 0 && /^[[:space:]]*\/\/\// { buf[nb++] = $0; next }
+  skip == 0 && /^[[:space:]]*func persist\(to game: Game,/ { nb = 0; skip = 1; depth = 0; seen = 0 }
+  skip == 1 {
+    l1 = $0; o = gsub(/[{]/, "X", l1)
+    l2 = $0; c = gsub(/[}]/, "X", l2)
+    depth += o - c
+    if (o > 0) seen = 1
+    if (seen == 1 && depth <= 0) skip = 0
+    next
+  }
+  { for (i = 0; i < nb; i++) print buf[i]; nb = 0; print }
+  END { for (i = 0; i < nb; i++) print buf[i] }
+' "$LIVEGAME_SOURCE" > "$SLICE"
+[ -s "$SLICE" ] || die "LiveGameEngine strip is empty — repo anchors changed."
+grep -q 'func persist(to game: Game' "$LIVEGAME_SOURCE" \
+  || die "LiveGameEngine no longer defines persist(to:context:teamsByID:) — the strip anchor is stale."
+# The strip must have taken the whole persistence graph with it. Checked against
+# the CODE only: `WeekAdvancer` is also named in half a dozen doc comments that
+# explain how the live path and the weekly sim divide the work, and those are
+# meant to survive.
+CODEONLY="$(mktemp)"
+grep -vE '^[[:space:]]*(///|//)' "$SLICE" > "$CODEONLY"
+for sym in 'ModelContext' 'WeekAdvancer' 'MedicalEngine.applyInjury' 'func persist('; do
+  if grep -qF "$sym" "$CODEONLY"; then
+    rm -f "$CODEONLY"
+    die "LiveGameEngine strip left \"$sym\" behind in code — it reaches app code the harness does not compile."
+  fi
+done
+rm -f "$CODEONLY"
+verbatim_guard "$LIVEGAME_SOURCE" "$SLICE"
+# --- DIE-WATCHES: every constant this scenario's numbers depend on -----------
+# 1. The two opponent-prep clamps. These ARE the ceiling the scenario reports
+#    against; a re-anchoring must fail the sync, not quietly move the band.
+grep -qF 'self.audibleBoost = max(0.0, min(0.20, audibleBoost))' "$SLICE" \
+  || die "LiveGameEngine no longer clamps audibleBoost to 0…0.20 — the coachedgame band is written against that ceiling."
+grep -qF 'self.defReadBoost = max(0.0, min(0.15, defReadBoost))' "$SLICE" \
+  || die "LiveGameEngine no longer clamps defReadBoost to 0…0.15 — the coachedgame band is written against that ceiling."
+# 2. The half-strength fold into per-play momentum — the mechanism under test.
+grep -qF 'playMomentum = min(1.0, playMomentum + audibleBoost * 0.5)' "$SLICE" \
+  || die "LiveGameEngine no longer folds audibleBoost into per-play momentum at half strength."
+grep -qF 'playMomentum = max(-1.0, playMomentum - defReadBoost * 0.5)' "$SLICE" \
+  || die "LiveGameEngine no longer folds defReadBoost into per-play momentum at half strength."
+# 3. The sim-to-final loop itself: the safety cap the scenario reports hits on.
+grep -qF 'while !isGameOver && playCount < 500' "$SLICE" \
+  || die "LiveGameEngine.simToEnd no longer loops behind a 500-play safety cap — the coachedgame report names that number."
+# 4. The per-play injury risk and its two multipliers (roster attrition is a
+#    scoring term, and §8k stages both multipliers for exactly this line).
+grep -qE '^[[:space:]]*private static let perPlayInjuryRisk = ' "$SLICE" \
+  || die "LiveGameEngine no longer defines perPlayInjuryRisk — the coachedgame report reads it."
+grep -qF 'risk *= MedicalEngine.workloadRiskMultiplier(player: live)' "$SLICE" \
+  || die "LiveGameEngine no longer applies the camp-workload injury multiplier."
+grep -qF 'risk *= MedicalEngine.facilityRiskMultiplier(player: live)' "$SLICE" \
+  || die "LiveGameEngine no longer applies the medical-wing injury multiplier."
+# 5. Whole-file constant sweep: every `private static let <name> = <number>` in
+#    the repo file must survive the strip byte-identical. `persist` holds none,
+#    so a mismatch means the strip ate something it should not have.
+LG_CONST_RE='^[[:space:]]*(private )?static let [A-Za-z][A-Za-z0-9]* = -?[0-9]'
+if ! diff <(grep -E "$LG_CONST_RE" "$LIVEGAME_SOURCE") <(grep -E "$LG_CONST_RE" "$SLICE") > /dev/null; then
+  diff <(grep -E "$LG_CONST_RE" "$LIVEGAME_SOURCE") <(grep -E "$LG_CONST_RE" "$SLICE") >&2 || true
+  die "a LiveGameEngine tuning constant did not survive the persist() strip."
+fi
+LG_CONST_COUNT="$(grep -cE "$LG_CONST_RE" "$SLICE")"
+{
+  echo "// GENERATED by sync_sources.sh — DO NOT EDIT."
+  echo "// Source: dynasty/dynasty/Engine/Match/LiveGameEngine.swift (sha $(sha "$LIVEGAME_SOURCE"))"
+  echo "// Transform: awk-strip of persist(to:context:teamsByID:) — the post-whistle"
+  echo "//            SwiftData write-back, which holds NO balance math and is the file's"
+  echo "//            only reference to Game / ModelContext / WeekAdvancer. Every tuning"
+  echo "//            literal below is the repo byte ($LG_CONST_COUNT lines verified)."
+  echo ""
+  cat "$SLICE"
+} > "$LIVEGAME_OUT"
+rm -f "$SLICE"; SLICE=""
+printf 'EXTRACT    %s  build/src/LiveGameEngineExtract.swift  <=  %s  dynasty/dynasty/Engine/Match/LiveGameEngine.swift  (persist() stripped; %s consts verified)\n' \
+  "$(sha "$LIVEGAME_OUT")" "$(sha "$LIVEGAME_SOURCE")" "$LG_CONST_COUNT" >> "$MANIFEST"
+echo "    LiveGameEngineExtract.swift  ($LG_CONST_COUNT tuning lines verified byte-identical to repo)"
+
+# --- 10d) CoachedGameScenario.swift (harness-owned scenario, verbatim copy) ---
+# Measurement + assertions only: it drives the staged coached engine, it never
+# re-implements it. Same math-free guard as GameModels.swift, plus one aimed at
+# this scenario in particular — the two prep-boost ceilings must be READ off
+# LiveGameEngine's own clamp behaviour, never re-typed as harness literals.
+echo "==> copying coached-game scenario (CoachedGameScenario.swift)"
+COACHEDSCENARIO_OUT="$SRC_OUT/CoachedGameScenario.swift"
+cp "$COACHEDSCENARIO_TEMPLATE" "$COACHEDSCENARIO_OUT"
+grep -q 'func scenarioCoachedGame' "$COACHEDSCENARIO_OUT" || die "CoachedGameScenario.swift lost its entry point."
+grep -q 'simToEnd()' "$COACHEDSCENARIO_OUT" || die "CoachedGameScenario.swift no longer runs the shipped sim-to-final."
+if grep -qE '^[[:space:]]*(private )?(static )?let (audible|defRead)[A-Za-z]* *=' "$COACHEDSCENARIO_OUT"; then
+  die "CoachedGameScenario.swift re-types a prep-boost constant — it must read the ceiling off LiveGameEngine's clamp."
+fi
+printf 'HARNESS    %s  build/src/CoachedGameScenario.swift  <=  (harness-owned scenario) driver/CoachedGameScenario.harness.swift  %s\n' \
+  "$(sha "$COACHEDSCENARIO_OUT")" "$(sha "$COACHEDSCENARIO_TEMPLATE")" >> "$MANIFEST"
+echo "    CoachedGameScenario.swift  (coached sim-to-final scoring distribution + prep-boost sweep)"
 
 echo "==> MANIFEST written to build/src/MANIFEST.txt"
 echo "==> sync complete: $(ls "$SRC_OUT"/*.swift | wc -l | tr -d ' ') engine sources staged."

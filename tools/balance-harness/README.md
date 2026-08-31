@@ -31,11 +31,12 @@ comment made it *look* trustworthy.
 **This harness makes that class of bug impossible by construction.** No engine
 constant is ever hand-typed here. On every build, `sync_sources.sh`:
 
-- copies 10 engine sources **verbatim** from the repo and asserts each copy's
-  SHA-256 equals the repo file's, and
-- **regenerates** the adaptive-AI code by mechanically slicing it out of the
-  real `AdaptiveOpponentAI.swift`, then **fails the build** if a single tuning
-  line differs from the repo.
+- copies the engine sources **verbatim** from the repo — `AdaptiveOpponentAI.swift`
+  among them, since the `coachedgame` wave removed the last reason to slice it —
+  and asserts each copy's SHA-256 equals the repo file's, and
+- **regenerates** every remaining extract by mechanically slicing it out of the
+  real file, then **fails the build** if a single tuning line differs from the
+  repo, or if the repo has stopped defining a lever the rig reports on.
 
 If a repo constant changes, the harness picks it up on the next `./run.sh`. If
 the slice ever mangled a constant, the build refuses to proceed.
@@ -58,15 +59,20 @@ tools/balance-harness/
                          SwiftData-model stubs (Player/Team/Coach/CoachRole +
                          SimPlayer.init(from:)) so the shipped full-game pipeline
                          (GameSimulator/DriveSimulator) compiles standalone
+    *Scenario.harness.swift
+                         one file per parameterized scenario — DraftClass,
+                         Career, LeagueGen, Perception, CoachedGame. Measurement
+                         and assertions only; each is copied verbatim into
+                         build/src and guarded math-free by sync_sources.sh
   build/                 GENERATED, git-ignored — reproduced by sync_sources.sh
     src/                 staged engine sources + MANIFEST.txt
     harness              compiled binary
 ```
 
-`build/` is `.gitignore`d — nothing generated is committed. Only the five
-authored files (`sync_sources.sh`, `run.sh`, `driver/main.swift`,
-`driver/SimPlayer.harness.swift`, `driver/GameModels.harness.swift`) plus this
-README live in git.
+`build/` is `.gitignore`d — nothing generated is committed. Only the authored
+files (`sync_sources.sh`, `run.sh`, `driver/main.swift`, the two `.harness.swift`
+scaffolding templates and the per-scenario `*Scenario.harness.swift` files) plus
+this README live in git.
 
 ---
 
@@ -104,34 +110,30 @@ Plus `Playbook.swift`, `HCPersona.swift`, `RosterValue.swift`,
 All 36 are copied byte-for-byte. The script asserts `sha(copy) == sha(repo)` for
 each and records both in `MANIFEST.txt`; a mismatch aborts the build.
 
-### 2. `AdaptiveOpponentAIExtract.swift` — mechanically sliced from the repo
+### 2. `AdaptiveOpponentAI.swift` — verbatim (it used to be a slice)
 
-The shipped `Engine/Match/AdaptiveOpponentAI.swift` does not compile standalone:
-its four **persona-hint** functions (`defenseKeyHint`, `exactCallHint`,
-`categoryKeyHint`, `offenseAdjustHint`) reference `DCPersona` / `OCPersona`,
-which live in `CoordinatorPersona.swift` and are pure UI-broadcast text — no
-balance math. Everything else (the `OffenseTendency` enum, `RunKeyState`,
-`PlayMemory`, `counterConcepts`, the `paKey*`/`runKey*` levers, and **all** the
-`static let` tuning constants + `catPivot`/`catAlpha`) resolves against the
-verbatim sources above.
+This file used to be staged as `AdaptiveOpponentAIExtract.swift`: an `awk` pass
+that copied the repo file line-for-line and **skipped only** its four
+**persona-hint** functions (`defenseKeyHint`, `exactCallHint`,
+`categoryKeyHint`, `offenseAdjustHint`), because they reference `DCPersona` /
+`OCPersona` from `CoordinatorPersona.swift` — a file the harness did not
+compile.
 
-So the extract is produced by an `awk` pass that copies the repo file
-line-for-line and **skips only those four functions** (brace-balanced deletion
-from each `static func …Hint(` declaration to its closing brace). Because those
-functions contain zero balance constants, every tuning literal flows through
-untouched, straight from the repo bytes. The script then enforces two guards
-before accepting the slice:
+The `coachedgame` scenario compiles it. `LiveGameEngine` holds one persona of
+each kind and calls all four hint functions, so `CoordinatorPersona.swift` is
+now a verbatim source (§1) and the strip has nothing left to justify it. The
+whole file arrives as repo bytes, sha-verified like every other verbatim copy.
+**One less transform is one less thing that can mangle a constant.**
 
-- **no persona leak** — `grep` for `DCPersona`/`OCPersona` in the sliced code
-  must find nothing (proves the right functions were removed); and
-- **constant-drift guard** — it `diff`s every balance-constant line
-  (`static let …`, and the `paKeyCompletion` / `paKeyBigPlay` /
-  `runKeyYardBite` / `runKeyStuffBonus` / `catPivot` / `catAlpha` signatures)
-  between the repo file and the slice. They must be **byte-identical** (39 lines
-  as of e1b0845); any difference aborts the build.
+Two guards survive the change, aimed at the failure mode a sha check cannot
+catch — the repo *renaming* a lever the rig reports on:
 
-This is the anti-drift core: the constants are never retyped, and the build
-proves it every time.
+- the tuning-line count (`static let …`, plus the `paKeyCompletion` /
+  `paKeyBigPlay` / `runKeyYardBite` / `runKeyStuffBonus` / `catPivot` /
+  `catAlpha` signatures) must stay at or above 20; and
+- each of the four `paKey*`/`runKey*` levers the harness header prints, and each
+  of the four persona-hint functions `LiveGameEngine` calls, must still be
+  declared. Either one going missing aborts the sync.
 
 ### 3. `SimPlayer.swift` — template + verbatim repo splices
 
@@ -261,6 +263,9 @@ BH_N=60000 ./run.sh regression         # override per-cell sample size
 
 # Locker room + camp workload (defaults shown):
 ./run.sh lockerroom --clubs 400 --travel-clubs 40
+
+# COACHED sim-to-final scoring (defaults shown; ~18 s at n=200):
+./run.sh coachedgame --n 200
 ```
 
 `run.sh` re-syncs (unless `--no-sync`), rebuilds only when a source is newer
@@ -292,8 +297,9 @@ with margin for that.
 | `leaguegen` | **P1 quality-pyramid wave** — the RANDOM league's t=0 intake: 400 × 53-man rosters straight out of `LeagueGenerator`'s rating path, reported as the §8 quality pyramid, plus a **pin against the Python mirror** in `tools/league-data/make_templates.py` | §8 bands on the intake distribution, depth-tier ordering, the rating floor, `veteranPotential` headroom ≤ 4, and Swift-vs-mirror agreement; **exits 1** on any violation |
 | `lockerroom` | **the two engines this harness did not cover** — locker-room chemistry across generated clubs (mean/sd, clamp shares, travel by archetype mix) and the shipped 21-day camp cycle's workload band split at preseason exit, with the strength-coach axis | chemistry mean **52–64**, sd **1.5–6.0**, pinned-at-100 **0–2 %**, travel **≥ 35**; camp `.overloaded`+`.burnedOut` **2–40 %**, mean injury multiplier **1.02–1.35**; 5 hard gates, **exits 1** on any violation |
 | `perception` | **AI draft fog (Track C)** — 32 personas draft N boards twice off the same rosters, once through `AIDraftPerception` and once on the true board (`--perceptionEnabled false`), through the shipped `DraftEngine.aiMakePick` | DIAGNOSTIC ONLY, always exits 0: R1 reaches / steals / true-BPA slide and mean \|perceived − true\| by GM persona |
+| `coachedgame` | **the path the user actually plays** — `LiveGameEngine.simToEnd()` over 4 matchups × 4 prep-boost steps, against `GameSimulator.simulate` on identical roster specs; per-team scoring distribution with the tail (p90/p99/max), headline-scoreline shares, a possession-vs-conversion attribution of the coached/quick delta, and the `simToEnd` safety-cap headroom | 7 hard gates, **exits 1** on any violation — see "Coached sim-to-final" below |
 
-The last seven are **parameterized** — they take `--flag value` args instead of a
+The last eight are **parameterized** — they take `--flag value` args instead of a
 scenario-name list (see "Round-5 full-game campaign" and "Draft-class validation"
 below), so they are invoked on their own, not via `all`.
 
@@ -711,3 +717,105 @@ aggregates run hot — e.g. sweeping `CB` drives opponent completion **74.8 → 
 and home win% **33 → 80 %**; sweeping `QB` drives net YPA **6.5 → 10.1** and
 completion **52 → 76 %**. Equal-tier matchups sit near 50/50 with a modest
 engine home-field tilt (~56–62 % home over small N).
+
+---
+
+## Coached sim-to-final (`coachedgame`)
+
+Every scoring number this rig had ever taken came out of `GameSimulator.simulate`
+— the **quick sim**. The game the user actually plays runs `LiveGameEngine`, and
+its "sim to final" button is `simToEnd()`: a loop over `step()` behind a 500-play
+safety cap with **no score check at all**. So a 60-21 coached blowout had nothing
+to be compared against — not a distribution, not a ceiling, not even the quick
+sim. This scenario is that comparison.
+
+### What it stages
+
+`LiveGameEngineExtract.swift` is the shipped 3 700-line engine minus exactly one
+function: `persist(to:context:teamsByID:)`, the post-whistle SwiftData write-back
+(final score onto the `Game` row, team records, season/postseason stats, injury
+persistence). It is the file's **only** reference to `Game` / `ModelContext` /
+`WeekAdvancer` / `MedicalEngine.applyInjury`, it runs strictly after the last
+snap, and it holds no balance math. Its doc-comment block goes with it, so the
+strip leaves no orphan comment behind.
+
+Getting there pulled in four more staged sources:
+
+- `CoordinatorPersona.swift` — verbatim (and it is what let §2 stop slicing
+  `AdaptiveOpponentAI.swift`);
+- `MatchupResolverExtract.swift` — verbatim minus its trailing
+  `extension SimPlayer`, whose `displayNumber` / `shortName` helpers
+  `SimPlayer.harness.swift` has carried as a **hand-copy** since before this file
+  was staged. Redeclaring them would be ambiguous, so they are stripped — and
+  the hand-copy they shadow is now diffed against the repo on every sync (the
+  jersey-range table line-for-line, the `shortName` body line-for-line);
+- `MedicalEngineExtract.swift` — widened from `dressed()` alone to also carry
+  `workloadRiskMultiplier` and `facilityRiskMultiplier`, the two terms
+  `LiveGameEngine` folds into its per-play injury roll;
+- `FacilityEngineExtract.swift` — the tier ladder and the medical-wing injury
+  multiplier, verbatim. Its club lookup (`levels(forPlayer:)`) fetches through a
+  `ModelContext` and cannot come across; the harness shim returns `.standard`,
+  which is **exactly** what the shipped function returns for a player with no
+  `teamID`. Both halves of that claim are guarded: the repo's short-circuit line
+  must still be there, and the stub `Player` must still declare an always-nil
+  `teamID`.
+
+### Die-watches
+
+Every constant the scenario's numbers depend on aborts the sync if the repo stops
+defining it: both prep clamps (`min(0.20, audibleBoost)` / `min(0.15,
+defReadBoost)`), both half-strength momentum folds (`audibleBoost * 0.5` /
+`defReadBoost * 0.5`), the `playCount < 500` cap in `simToEnd`,
+`perPlayInjuryRisk` and its two multipliers, and a whole-file `diff` of every
+`static let <name> = <number>` across the strip. The scenario file itself is
+grepped for re-typed prep-boost literals — it must read the ceiling off the
+engine's behaviour, never name it.
+
+### How the prep ceiling is measured, not typed
+
+The sweep asks `LiveGameEngine` for four boost pairs, the last of which is
+**double the shipped clamp** (`0.40 / 0.300`). A binding clamp shows up from
+outside as `max` and `over` measuring the same game. They agree to **0.12 of a
+point**, and the boosts turn out to be nearly inert on scoring at all: the
+ceiling buys the player **−0.06 points per game**. Whatever makes a coached game
+high-scoring, it is not opponent prep.
+
+### What it found
+
+At `--n 400` (6 400 coached games vs 1 600 quick-sim reference games):
+
+| | coached (no prep) | quick sim | delta |
+|---|---|---|---|
+| points / team-game | 27.30 | 20.46 | **+6.85** |
+| drives / game | 20.75 | 23.31 | −2.56 |
+| scrimmage plays / game | 139.90 | 144.86 | −4.96 |
+| points / drive | 2.63 | 1.76 | **+0.88** |
+
+`LiveGameEngine`'s own header promises that a nil-argument live game is
+"statistically identical to `GameSimulator.simulate`", and `simToEnd()` is
+precisely such a game. It is not identical: it scores a third more, and the
+attribution is unambiguous — the coached path takes **fewer** possessions and
+converts each one **50 % better**. The tail follows: the winning team's p99 is
+**60** coached against **51** quick, a team reaches 50+ in **7.80 %** of coached
+games against **1.50 %** quick, and 60+ in **1.03 %** against **0.06 %**.
+
+That divergence is a defect, and sizing it is a different job from fixing it —
+which is why `CG-1` gates it at 9.0 rather than at parity. A rail set at parity
+would fail on every run and guard nothing; set at 9.0 it stops the gap growing
+while the product call on it is outstanding.
+
+### The gates
+
+All seven are set **from** the first full run, and deliberately loosely — the
+printed tables carry the tighter expectations, because this scenario's job is to
+report what the coached engine does, not to hold it still.
+
+| id | rail | measured |
+|----|------|----------|
+| CG-1 | coached-vs-quick per-team points gap ≤ **9.0** | 6.85 |
+| CG-2 | prep saturates: max-request vs double-the-clamp ≤ **1.5** | 0.12 |
+| CG-3 | max prep lift on the player's own scoring ≤ **3.0** | −0.06 |
+| CG-4 | p99 of the winning team's score ≤ **66** | 60 |
+| CG-5 | share of games with a 60-point team ≤ **2.50 %** | 1.03 % |
+| CG-6 | p99 margin of victory ≤ **62** | 53 |
+| CG-7 | longest play log **< 500** (the `simToEnd` cap never truncated) | 195 |

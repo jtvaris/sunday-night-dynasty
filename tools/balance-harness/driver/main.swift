@@ -2232,11 +2232,16 @@ func scenarioLockerRoom(_ f: [String: String]) {
 // Parameterized round-5 scenarios consume `--flag value` args instead of a
 // scenario-name list. They dispatch BEFORE the name-list path so every existing
 // scenario keeps working exactly as before.
-if let first = args.first, first == "fullgame" || first == "positionsweep" || first == "blowoutprobe" || first == "draftclass" || first == "career" || first == "leaguegen" || first == "perception" || first == "lockerroom" {
+if let first = args.first, first == "fullgame" || first == "positionsweep" || first == "blowoutprobe" || first == "draftclass" || first == "career" || first == "leaguegen" || first == "perception" || first == "lockerroom" || first == "coachedgame" {
     let flags = parseFlags(Array(args.dropFirst()))
     printHeader()
     print("")
     if first == "fullgame" { scenarioFullGame(flags) }
+    // `LiveGameEngine` is `@MainActor` (it publishes UI state in the app). The
+    // harness is a single-threaded command-line tool whose top-level code runs
+    // on the main thread, so the isolation is satisfied in fact; this states it
+    // to the compiler rather than hopping to an actor the tool does not have.
+    else if first == "coachedgame" { MainActor.assumeIsolated { scenarioCoachedGame(flags) } }
     else if first == "blowoutprobe" { scenarioBlowoutProbe(flags) }
     else if first == "draftclass" { scenarioDraftClass(flags) }
     else if first == "career" { scenarioCareer(flags) }
