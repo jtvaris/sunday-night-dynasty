@@ -8631,14 +8631,33 @@ enum WeekAdvancer {
     /// head coach's when the OC chair is empty or the OC is a defensive hire.
     /// A staff always runs SOMETHING; falling straight through to `nil` was
     /// another way the old fit landed on a neutral pin.
-    private static func installedOffensiveScheme(staff: [Coach]) -> OffensiveScheme? {
+    ///
+    /// ## Why this is not `private` any more
+    ///
+    /// It is the LIVE answer to "what does this club run", and three engines
+    /// outside this file need it: the `.trainingCamp` pass writes it into
+    /// `Team.lastOffensiveSchemeRaw` (below), `offseasonSchemeFit` reads it, and
+    /// — the reason it was promoted — `DraftDayCoordinator`, `FreeAgencyEngine`
+    /// and `MultiSeasonSmokeTest` now hand it to
+    /// `DraftEngine.teamNeedComponents` so the scheme-fit rung scores the system
+    /// the club installs TODAY rather than the snapshot camp last wrote.
+    ///
+    /// `SeasonPhase` runs `.coachingChanges → … → .freeAgency → .draft → .otas
+    /// → .trainingCamp`, so between a coordinator hire and the following camp
+    /// the snapshot names the OLD system. Every caller that holds the staff must
+    /// resolve through THIS function rather than keep a second copy of the
+    /// OC → HC → AHC fallback, which is the whole point of it being one
+    /// function: the draft board, the free-agent market and the camp writer
+    /// must never disagree about what a club runs.
+    static func installedOffensiveScheme(staff: [Coach]) -> OffensiveScheme? {
         staff.first { $0.role == .offensiveCoordinator }?.offensiveScheme
             ?? staff.first { $0.role == .headCoach }?.offensiveScheme
             ?? staff.first { $0.role == .assistantHeadCoach }?.offensiveScheme
     }
 
-    /// The defensive system the building installs (see `installedOffensiveScheme`).
-    private static func installedDefensiveScheme(staff: [Coach]) -> DefensiveScheme? {
+    /// The defensive system the building installs (see `installedOffensiveScheme`,
+    /// including the note on why it is not `private`).
+    static func installedDefensiveScheme(staff: [Coach]) -> DefensiveScheme? {
         staff.first { $0.role == .defensiveCoordinator }?.defensiveScheme
             ?? staff.first { $0.role == .headCoach }?.defensiveScheme
             ?? staff.first { $0.role == .assistantHeadCoach }?.defensiveScheme

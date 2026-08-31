@@ -195,6 +195,17 @@ enum DraftEngine {
     ///     recent LAST. Only the tail is read. Empty (the default) disables the
     ///     run model, which is the correct behaviour for any caller that does
     ///     not have a league-wide pick history.
+    ///   - installedOffensiveScheme: the system this club installs TODAY, in
+    ///     `Player.schemeFamiliarity` key form — `WeekAdvancer
+    ///     .installedOffensiveScheme(staff:)?.rawValue`. It feeds the scheme-fit
+    ///     rung of `teamNeedComponents`, and threading it is what makes that
+    ///     rung SPEAK on draft day: `Team.lastOffensiveSchemeRaw` is written
+    ///     only by the `.trainingCamp` pass, which runs after the draft, so a
+    ///     club that hired a coordinator at `.coachingChanges` would otherwise
+    ///     be scored against the system its room already knows and read no
+    ///     hole. `nil` (no staff in hand) falls back to that snapshot exactly as
+    ///     before.
+    ///   - installedDefensiveScheme: the same for the defensive rooms.
     ///   - perceptionEnabled: `false` scores the TRUE board — the pre-fog
     ///     behaviour, kept as the control arm for the `perception` balance
     ///     scenario. No shipping call site passes it.
@@ -211,6 +222,8 @@ enum DraftEngine {
         teamRoster: [Player],
         pickNumber: Int = 0,
         recentPositions: [Position] = [],
+        installedOffensiveScheme: String? = nil,
+        installedDefensiveScheme: String? = nil,
         perceptionEnabled: Bool = true,
         tasteEnabled: Bool = true
     ) -> CollegeProspect {
@@ -227,7 +240,18 @@ enum DraftEngine {
         // whether the men at a position know the system this club installed
         // (`schemeMismatchBump`), and that is a fact about the pairing, not
         // about the roster alone.
-        let needs = teamNeedComponents(roster: teamRoster, club: team)
+        //
+        // And the INSTALL goes in beside the club. `Team.lastOffensiveSchemeRaw`
+        // is written at `.trainingCamp`, which is two phases past `.draft`, so
+        // the snapshot on draft day names last season's system; a caller that
+        // holds the staff resolves the live one and passes it here, which is the
+        // only way the rung reaches the club that just changed a coordinator.
+        let needs = teamNeedComponents(
+            roster: teamRoster,
+            club: team,
+            installedOffensiveScheme: installedOffensiveScheme,
+            installedDefensiveScheme: installedDefensiveScheme
+        )
         // One lens per pick, not per prospect — the archetype draw is the same
         // for all 300 names on the board.
         let lens = perceptionEnabled ? AIDraftPerception.lens(forTeam: team.id) : nil
@@ -1405,12 +1429,39 @@ enum DraftEngine {
     ///     leads, `1.352` against `1.292`. The order flips.
     ///
     ///   So in a season where every offensive and defensive room sits under the
-    ///   bar at once, this list drifts toward the positional-weight quintet —
-    ///   the same edge ``teamNeedDeficits`` records for itself. It still
-    ///   separates clubs whose fit is UNEVEN, which is the ordinary case.
-    static func topTeamNeeds(roster: [Player], limit: Int = 5, club: Team? = nil) -> [Position] {
+    ///   bar at once, this list drifts toward the positional-weight quintet. It
+    ///   still separates clubs whose fit is UNEVEN, which is the ordinary case.
+    ///
+    ///   ``teamNeedDeficits`` now suppresses the rung per side when it stops
+    ///   discriminating; this function deliberately does NOT. It is the value
+    ///   ranking — its whole contract is that it always returns `limit`
+    ///   positions and ranks by positional weight where the evidence is flat —
+    ///   so there is no degenerate case for the suppression to protect. A caller
+    ///   that means "this club has a hole" should be reading
+    ///   ``teamNeedDeficits``, which is the same sentence the paragraph above
+    ///   has always ended on.
+    ///
+    /// - Parameters:
+    ///   - installedOffensiveScheme: the live install, when the caller holds the
+    ///     staff, in `Player.schemeFamiliarity` key form. It overrides `club`'s
+    ///     last-camp snapshot for the offensive rooms.
+    ///   - installedDefensiveScheme: the same for the defensive rooms.
+    // `roster:` stays on the declaration line: `tools/balance-harness/
+    // sync_sources.sh` guards the slice with `grep -q 'static func
+    // topTeamNeeds(roster'`, so wrapping the first parameter onto its own line
+    // makes the harness refuse to build ("DraftEngine slice lost topTeamNeeds").
+    static func topTeamNeeds(roster: [Player],
+                             limit: Int = 5,
+                             club: Team? = nil,
+                             installedOffensiveScheme: String? = nil,
+                             installedDefensiveScheme: String? = nil) -> [Position] {
         guard !roster.isEmpty else { return [] }
-        let needs = evaluateTeamNeeds(roster: roster, club: club)
+        let needs = evaluateTeamNeeds(
+            roster: roster,
+            club: club,
+            installedOffensiveScheme: installedOffensiveScheme,
+            installedDefensiveScheme: installedDefensiveScheme
+        )
         return needs.sorted { $0.value > $1.value }.prefix(limit).map(\.key)
     }
 
@@ -1442,11 +1493,26 @@ enum DraftEngine {
     /// Evaluates which positions a team needs most.
     /// Returns a dictionary of position -> multiplier (> 1.0 means higher need).
     ///
-    /// - Parameter club: the club whose installed system the roster is measured
-    ///   against. `nil` — every caller that has a roster but no `Team` — scores
-    ///   exactly as before: the scheme half is silent, never guessed.
-    private static func evaluateTeamNeeds(roster: [Player], club: Team? = nil) -> [Position: Double] {
-        teamNeedComponents(roster: roster, club: club).mapValues { $0.multiplier * $0.weight }
+    /// - Parameters:
+    ///   - club: the club whose last-camp scheme snapshot the roster is measured
+    ///     against when no live install is supplied. `nil` — every caller that
+    ///     has a roster but no `Team` — scores exactly as before: the scheme
+    ///     half is silent, never guessed.
+    ///   - installedOffensiveScheme: the live install, when the caller holds the
+    ///     staff. See ``teamNeedComponents(roster:club:installedOffensiveScheme:installedDefensiveScheme:)``.
+    ///   - installedDefensiveScheme: the same for the defensive rooms.
+    private static func evaluateTeamNeeds(
+        roster: [Player],
+        club: Team? = nil,
+        installedOffensiveScheme: String? = nil,
+        installedDefensiveScheme: String? = nil
+    ) -> [Position: Double] {
+        teamNeedComponents(
+            roster: roster,
+            club: club,
+            installedOffensiveScheme: installedOffensiveScheme,
+            installedDefensiveScheme: installedDefensiveScheme
+        ).mapValues { $0.multiplier * $0.weight }
     }
 
     /// The two halves of a need score, kept apart.
@@ -1532,14 +1598,24 @@ enum DraftEngine {
     ///
     /// - Parameters:
     ///   - roster: the club's players.
-    ///   - club: the club whose installed system the roster is measured against,
-    ///     read off ``Team/lastOffensiveSchemeRaw`` / ``Team/lastDefensiveSchemeRaw``.
-    ///     `nil` — the default, and every caller that holds a roster without a
-    ///     `Team` — leaves the scheme half silent and reproduces the previous
-    ///     behaviour exactly.
+    ///   - club: the club whose LAST-CAMP snapshot the roster is measured
+    ///     against, read off ``Team/lastOffensiveSchemeRaw`` /
+    ///     ``Team/lastDefensiveSchemeRaw``. Used only where the caller does not
+    ///     supply a live install below. `nil` — and every caller that holds a
+    ///     roster without a `Team` — leaves the scheme half silent and
+    ///     reproduces the previous behaviour exactly.
+    ///   - installedOffensiveScheme: the system the club installs TODAY, as
+    ///     `WeekAdvancer.installedOffensiveScheme(staff:)` resolves it, in
+    ///     `Player.schemeFamiliarity` key form (`OffensiveScheme.rawValue`).
+    ///     Non-`nil` overrides the snapshot for the offensive rooms; `nil` falls
+    ///     back to it. A caller that wants the offensive half silent outright
+    ///     passes `club: nil` and resolves the defensive key itself.
+    ///   - installedDefensiveScheme: the same for the defensive rooms.
     private static func teamNeedComponents(
         roster: [Player],
-        club: Team? = nil
+        club: Team? = nil,
+        installedOffensiveScheme: String? = nil,
+        installedDefensiveScheme: String? = nil
     ) -> [Position: (multiplier: Double, weight: Double)] {
         // Ideal roster composition targets (starters per position).
         let idealCounts: [Position: Int] = [
@@ -1558,28 +1634,35 @@ enum DraftEngine {
             positionRooms[player.position, default: []].append(player)
         }
 
-        // What this club ran AT THE LAST CAMP, as `Player.schemeFamiliarity`
-        // keys it — not necessarily what it installs today. Say it plainly,
-        // because the distinction bites exactly here:
+        // What this club runs, as `Player.schemeFamiliarity` keys it. TWO
+        // sources, and which one answers matters:
         //
-        // `Team.lastOffensiveSchemeRaw` is a snapshot, written only by the
-        // `.trainingCamp` pass in `WeekAdvancer` and by nothing else in the
-        // tree. `SeasonPhase` orders the year `.coachingChanges` → … →
-        // `.draft` → `.otas` → `.trainingCamp`, so a coordinator hired at
-        // `.coachingChanges` does not reach this snapshot until the camp AFTER
-        // the draft. For the whole pre-draft window a club that has just
-        // changed a coordinator is therefore measured against the system its
-        // room is already fluent in, reads no hole, and drafts as before —
-        // silent for the population the rung exists for. The live answer needs
-        // the staff resolution (`WeekAdvancer.installedOffensiveScheme(staff:)`,
-        // `private` to that engine), which no caller of this function supplies.
-        // Recorded rather than papered over; threading the current install
-        // through `aiMakePick` is the fix and is a call-site change.
+        // 1. The LIVE install, resolved from the staff by
+        //    `WeekAdvancer.installedOffensiveScheme(staff:)` and handed in by a
+        //    caller that has the coaches (the draft room, the free-agent
+        //    market, the headless smoke). This is the system the club will
+        //    actually run next season.
+        // 2. `Team.lastOffensiveSchemeRaw`, the fallback — a SNAPSHOT written
+        //    only by the `.trainingCamp` pass in `WeekAdvancer` and by nothing
+        //    else in the tree.
         //
-        // `nil` (a league whose first camp has not run, or a save older than
-        // the property) leaves the scheme half silent.
-        let offensiveInstall = club?.lastOffensiveSchemeRaw
-        let defensiveInstall = club?.lastDefensiveSchemeRaw
+        // The distinction is the whole reason the parameters exist.
+        // `SeasonPhase` orders the year `.coachingChanges` → … → `.freeAgency`
+        // → `.draft` → `.otas` → `.trainingCamp`, so a coordinator hired at
+        // `.coachingChanges` does not reach the snapshot until the camp AFTER
+        // free agency and the draft have both been spent. Read off the snapshot
+        // alone, a club that has just changed a coordinator is measured against
+        // the system its room is already fluent in, reads no hole, and drafts
+        // and signs as before — silent for exactly the population this rung
+        // exists for. A caller that holds the staff must therefore pass the
+        // live install; one that does not (a screen with a roster and no
+        // coaches) falls back to the snapshot, which is the previous behaviour.
+        //
+        // `nil` on both counts (a league whose first camp has not run, a club
+        // with no staff at all, or a save older than the property) leaves the
+        // scheme half silent.
+        let offensiveInstall = installedOffensiveScheme ?? club?.lastOffensiveSchemeRaw
+        let defensiveInstall = installedDefensiveScheme ?? club?.lastDefensiveSchemeRaw
 
         var needs: [Position: (multiplier: Double, weight: Double)] = [:]
         for position in Position.allCases {
@@ -1616,11 +1699,13 @@ enum DraftEngine {
                 // The SIDE-OF-BALL split is the one `RosterView`'s FIT slot
                 // uses (`RosterView.installedScheme(for:)`): a man is measured
                 // against his own unit's install and never borrows the other
-                // side's. The SCHEME VALUE is not the same — RosterView reads
-                // the current coordinator live off the `Coach` query, this
-                // reads the last camp's snapshot (see above) — so from
-                // `.coachingChanges` to `.draft` the two surfaces will disagree
-                // for any club that changed a coordinator.
+                // side's. The SCHEME VALUE now agrees with it wherever the
+                // caller supplies the live install — RosterView reads the
+                // current coordinator off the `Coach` query and so does
+                // `WeekAdvancer.installedOffensiveScheme(staff:)`. A caller
+                // that supplies neither install still reads the snapshot and
+                // will disagree with the screen from `.coachingChanges` to the
+                // following camp.
                 let installedScheme: String?
                 switch position.side {
                 case .offense:      installedScheme = offensiveInstall
@@ -1873,25 +1958,122 @@ enum DraftEngine {
     /// is the point of the change, and it is what makes a weak fit a market
     /// signal rather than a screen.
     ///
-    /// It comes with one edge the caller has to know about, because this
-    /// function's whole contract is "an empty result is a real answer": the
-    /// season a club installs a NEW system, `VersatilityDevelopmentEngine`'s
-    /// install baseline puts every room under the bar at once, so every position
-    /// clears 1.0 and the `prefix(limit)` falls back to ranking by positional
-    /// weight — the {QB, DE, CB, WR, LT} quintet this function exists to avoid
-    /// handing out. It is a true statement about an install year (that club
-    /// genuinely needs men who fit) but it is not a HOLE list, so a market that
-    /// treats the top five as holes should either skip the scheme term in an
-    /// install season or read the count before it reads the ranking.
+    /// ### The install-season edge, and how it is handled
     ///
-    /// No shipping caller passes `club` yet: free agency's three call sites
-    /// (`FreeAgencyEngine.executeNewLeagueYear` and the two market passes) each
-    /// hold the `Team` and are the intended next step, with the install-year
-    /// question above settled first.
-    static func teamNeedDeficits(roster: [Player], limit: Int = 5, club: Team? = nil) -> [Position] {
+    /// This function's whole contract is "an empty result is a real answer", and
+    /// the scheme rung can break that. The season a club installs a NEW system,
+    /// `VersatilityDevelopmentEngine.installBaseline` is capped at
+    /// `installBaselineCap = 50` — deliberately UNDER
+    /// ``schemeInstallFamiliarityBar`` (55) — so every room on that side of the
+    /// ball is under the bar at once. Every position then clears 1.0, and
+    /// `prefix(limit)` ranks a full list by `multiplier × weight` with the
+    /// multiplier equal everywhere: the {QB, DE, CB, WR, LT} positional-weight
+    /// quintet this function exists to avoid handing out.
+    ///
+    /// **The rule: the scheme rung names a hole only where it discriminates.**
+    /// Per side of the ball, if the rung fires on more than HALF the rooms it
+    /// could score there — occupied rooms on that side; an empty room takes the
+    /// `+0.3` branch instead and specialists belong to neither install — then it
+    /// is describing the CLUB, not a position, and it is dropped for that side.
+    /// The list falls back to depth-and-grade evidence, which is the honest
+    /// answer to "where are this club's holes" in a year when the answer to
+    /// "who knows the playbook" is "nobody".
+    ///
+    /// Three things worth naming about that rule:
+    ///
+    /// - **Half, not all.** An exact "every room fires" test would be defeated
+    ///   by one veteran who happened to have played the new system before,
+    ///   leaving sixteen of seventeen rooms above 1.0 and the prefix just as
+    ///   degenerate. A majority is the weakest test that survives that, and it
+    ///   introduces no tuned constant: the denominator is the club's own
+    ///   occupied rooms.
+    /// - **Per SIDE, because an install is per side.** A club that hires an OC
+    ///   and keeps its DC has ten offensive rooms at the baseline and seven
+    ///   defensive rooms unchanged. Suppressing globally would silence a real
+    ///   defensive fit hole for an offensive install; suppressing per side keeps
+    ///   it.
+    /// - **`aiMakePick` is deliberately NOT covered by it.** The draft board
+    ///   reads `teamNeedComponents` directly and scores the multiplier as
+    ///   POINTS, not as a threshold — a uniform offensive bump there correctly
+    ///   says "this club's offence cannot run what it installed", and the
+    ///   ordering among offensive prospects is untouched by a constant. It is
+    ///   only membership-by-threshold, which is what this function computes,
+    ///   that a uniform term destroys.
+    ///
+    /// One residual, recorded rather than papered over: a club one season PAST
+    /// an install, whose rooms are climbing back through the bar, can still fire
+    /// the rung on a majority of one side and have it suppressed while it was
+    /// genuinely uneven. That costs a fit signal for a season; it never invents
+    /// one.
+    ///
+    /// - Parameters:
+    ///   - roster: the club's players.
+    ///   - limit: how many positions to return.
+    ///   - club: the club, for its last-camp scheme snapshot. Free agency's
+    ///     three call sites and the UDFA market all pass it.
+    ///   - installedOffensiveScheme: the LIVE install where the caller holds the
+    ///     staff (`FreeAgencyEngine.simulateAIFreeAgency` does). Free agency
+    ///     runs at `.freeAgency`, four phases before `.trainingCamp` writes the
+    ///     snapshot, so a club that changed a coordinator is measured against
+    ///     last year's system without it — the same staleness the draft had.
+    ///   - installedDefensiveScheme: the same for the defensive rooms.
+    static func teamNeedDeficits(
+        roster: [Player],
+        limit: Int = 5,
+        club: Team? = nil,
+        installedOffensiveScheme: String? = nil,
+        installedDefensiveScheme: String? = nil
+    ) -> [Position] {
         guard !roster.isEmpty else { return [] }
+
+        // The evidence half with the scheme rung silent. It is the fallback for
+        // a side where the rung stops discriminating, and the baseline that says
+        // which rooms the rung actually moved — the only term that differs
+        // between these two maps is `schemeMismatchBump`.
+        let depthAndGrade = teamNeedComponents(roster: roster)
+        // A caller with no club and no install cannot fire the rung at all, and
+        // the second pass would return the first one byte for byte. Skipped, so
+        // the ~30 scheme-blind call sites pay exactly what they paid before.
+        let hasSchemeInput = club != nil
+            || installedOffensiveScheme != nil
+            || installedDefensiveScheme != nil
+        let withScheme = hasSchemeInput
+            ? teamNeedComponents(
+                roster: roster,
+                club: club,
+                installedOffensiveScheme: installedOffensiveScheme,
+                installedDefensiveScheme: installedDefensiveScheme
+            )
+            : depthAndGrade
+
+        // Rooms the rung could score, and rooms it did, per side.
+        var occupied: Set<Position> = []
+        for player in roster { occupied.insert(player.position) }
+        var scorableBySide: [PositionSide: Int] = [:]
+        for position in occupied where position.side != .specialTeams {
+            scorableBySide[position.side, default: 0] += 1
+        }
+        var firingBySide: [PositionSide: Int] = [:]
+        for (position, live) in withScheme where position.side != .specialTeams {
+            guard let base = depthAndGrade[position] else { continue }
+            if live.multiplier > base.multiplier {
+                firingBySide[position.side, default: 0] += 1
+            }
+        }
+        // Strict majority: `firing > scorable / 2`, written as an integer
+        // comparison so a 5-of-10 side keeps the rung and 6-of-10 drops it.
+        var suppressedSides: Set<PositionSide> = []
+        for side in [PositionSide.offense, PositionSide.defense] {
+            let scorable = scorableBySide[side] ?? 0
+            let firing = firingBySide[side] ?? 0
+            if firing * 2 > scorable { suppressedSides.insert(side) }
+        }
+
         var scored: [(position: Position, score: Double)] = []
-        for (position, components) in teamNeedComponents(roster: roster, club: club) {
+        for (position, live) in withScheme {
+            let components = suppressedSides.contains(position.side)
+                ? (depthAndGrade[position] ?? live)
+                : live
             guard components.multiplier > 1.0 else { continue }
             scored.append((position: position, score: components.multiplier * components.weight))
         }

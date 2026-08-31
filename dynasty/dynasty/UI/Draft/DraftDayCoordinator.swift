@@ -420,19 +420,31 @@ final class DraftDayCoordinator: ObservableObject {
         self.leagueCoreReference = TradeValueEngine.leagueCoreReference(allPlayers: allPlayers)
         self.marketSeats = [:]
 
-        // Resolve each team's coordinator schemes once (#33 OSA B) so pick
+        // Resolve each team's installed schemes once (#33 OSA B) so pick
         // grades can score a prospect against the drafting team's actual
-        // offensive/defensive system instead of a flat placeholder.
+        // offensive/defensive system instead of a flat placeholder — and so the
+        // AI's own board can read the same install (see `aiMakePickForCurrent`).
+        //
+        // Through `WeekAdvancer.installedOffensiveScheme(staff:)`, which is the
+        // one definition of "what does this club run": the coordinator's system,
+        // or the head coach's when that chair is empty, or the assistant head
+        // coach's. This loop used to walk the coach rows flat and let the LAST
+        // row carrying a scheme win, so a position coach with an offensive
+        // system could overwrite the offensive coordinator's, in an order
+        // SwiftData chose. That is now a resolution and not a race.
         let allCoaches = (try? modelContext.fetch(FetchDescriptor<Coach>(
             predicate: #Predicate { $0.careerID == cid }
         ))) ?? []
+        let staffByTeam = Dictionary(
+            grouping: allCoaches.filter { $0.teamID != nil },
+            by: { $0.teamID! }
+        )
         var schemeMap: [UUID: (offense: OffensiveScheme?, defense: DefensiveScheme?)] = [:]
-        for coach in allCoaches {
-            guard let teamID = coach.teamID else { continue }
-            var entry = schemeMap[teamID] ?? (offense: nil, defense: nil)
-            if let off = coach.offensiveScheme { entry.offense = off }
-            if let def = coach.defensiveScheme { entry.defense = def }
-            schemeMap[teamID] = entry
+        for (teamID, staff) in staffByTeam {
+            schemeMap[teamID] = (
+                offense: WeekAdvancer.installedOffensiveScheme(staff: staff),
+                defense: WeekAdvancer.installedDefensiveScheme(staff: staff)
+            )
         }
         self.schemesByTeam = schemeMap
 
@@ -1314,12 +1326,28 @@ final class DraftDayCoordinator: ObservableObject {
         // appended inside `completePick`, so at this instant it holds exactly
         // the cards already read out — the league's pick history, in order,
         // most recent last, which is what the run model wants.
+        // The LIVE install, not the snapshot. `DraftEngine`'s scheme-fit rung
+        // reads `Team.lastOffensiveSchemeRaw` when nothing is passed, and that
+        // property is written by exactly one site — the `.trainingCamp` pass in
+        // `WeekAdvancer` — which runs two phases AFTER `.draft`. So on draft
+        // night the snapshot names the system the club ran last season, and a
+        // club that hired a coordinator at `.coachingChanges` would be scored
+        // against the playbook its room already knows and read no hole at all.
+        //
+        // This coordinator holds the staff (`schemesByTeam`, resolved at load
+        // through `WeekAdvancer.installedOffensiveScheme(staff:)`), so it
+        // resolves the answer here and hands it down. `DraftEngine` is reached
+        // from ~30 UI sites and must stay free of a database read, which is why
+        // the resolution lives at this end and not in the engine.
+        let install = schemesByTeam[pick.currentTeamID]
         let chosen = DraftEngine.aiMakePick(
             team: team,
             availableProspects: availableProspects,
             teamRoster: roster,
             pickNumber: pick.pickNumber,
-            recentPositions: allPickResults.suffix(Self.runHistoryDepth).map(\.position)
+            recentPositions: allPickResults.suffix(Self.runHistoryDepth).map(\.position),
+            installedOffensiveScheme: install?.offense?.rawValue,
+            installedDefensiveScheme: install?.defense?.rawValue
         )
         completePick(pick: pick, prospect: chosen, isUserPick: false)
     }

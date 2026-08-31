@@ -510,10 +510,21 @@ enum MultiSeasonSmokeTest {
         var draftedPotSum = 0
         for pick in picks {
             guard !available.isEmpty, let team = teamsByID[pick.currentTeamID] else { continue }
+            // The live install, resolved from the same `coachesByTeam` the
+            // rookie familiarity seed below reads. Without it the scheme-fit
+            // rung of the need model scores every club against
+            // `Team.lastOffensiveSchemeRaw`, which the `.trainingCamp` pass
+            // writes two phases after `.draft` — so the headless draft would
+            // measure a board that is blind to every coordinator hired this
+            // offseason, and the smoke would report a league drafting on stale
+            // fit while the app drafts on live fit.
+            let staff = coachesByTeam[pick.currentTeamID] ?? []
             let chosen = DraftEngine.aiMakePick(
                 team: team,
                 availableProspects: available,
-                teamRoster: rosters[team.id] ?? []
+                teamRoster: rosters[team.id] ?? [],
+                installedOffensiveScheme: WeekAdvancer.installedOffensiveScheme(staff: staff)?.rawValue,
+                installedDefensiveScheme: WeekAdvancer.installedDefensiveScheme(staff: staff)?.rawValue
             )
             let player = DraftEngine.convertToPlayer(
                 prospect: chosen,
