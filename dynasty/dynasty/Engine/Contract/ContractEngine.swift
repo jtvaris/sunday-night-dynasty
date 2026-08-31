@@ -2038,13 +2038,43 @@ enum ContractEngine {
 
     // MARK: - Franchise Tag
 
+    /// How many salaries each tag averages.
+    ///
+    /// The franchise tag has always taken the top 5. The transition tag takes
+    /// the top 10, which is the whole of the difference between their prices:
+    /// ranks 6-10 are by definition no dearer than ranks 1-5, so the transition
+    /// number is at or below the franchise number at every position, and the gap
+    /// between them is exactly how top-heavy that position's market is.
+    static let franchiseTagPoolSize = 5
+    static let transitionTagPoolSize = 10
+
+    /// **The one average both tags are built from.**
+    ///
+    /// Two tags priced by two copies of "sort, take n, divide by what you got"
+    /// is two prices that drift the first time one copy is touched, so there is
+    /// one copy and the tag identity is the `count` passed into it. Divides by
+    /// what the league could actually supply, not by `count` — a position with
+    /// six salaried men in it has a real top-6 average and no honest way to
+    /// invent four more.
+    static func topSalaryAverage(_ topSalaries: [Int], count: Int) -> Int {
+        guard count > 0 else { return 0 }
+        let top = topSalaries.sorted(by: >).prefix(count)
+        guard !top.isEmpty else { return 0 }
+        return top.reduce(0, +) / top.count
+    }
+
     /// Calculate the franchise-tag value for a position: the average of the
     /// top 5 salaries (in thousands) supplied for that position group.
     static func franchiseTagValue(position: Position, topSalaries: [Int]) -> Int {
-        let sorted = topSalaries.sorted(by: >)
-        let topFive = Array(sorted.prefix(5))
-        guard !topFive.isEmpty else { return 0 }
-        return topFive.reduce(0, +) / topFive.count
+        topSalaryAverage(topSalaries, count: franchiseTagPoolSize)
+    }
+
+    /// The transition-tag value for a position: the average of the top 10
+    /// salaries (in thousands) supplied for that position group.
+    ///
+    /// Same function, same list, a wider slice of it — see ``topSalaryAverage``.
+    static func transitionTagValue(position: Position, topSalaries: [Int]) -> Int {
+        topSalaryAverage(topSalaries, count: transitionTagPoolSize)
     }
 
     /// Cap-mode-aware franchise-tag value, **floor included** (task #87 / F16).
@@ -2066,9 +2096,39 @@ enum ContractEngine {
         }
     }
 
+    /// Cap-mode-aware TRANSITION-tag value, floored on the same share of the cap
+    /// the franchise tag is floored on.
+    ///
+    /// The floor is deliberately the SAME number and not a cheaper one of its
+    /// own. It is not a property of either tag — it is the minimum tender a club
+    /// may put on a man at a position the league has barely paid anybody at, and
+    /// inventing a second, lower floor would be a constant with nothing behind
+    /// it. Where the floor binds, the two tags therefore cost the same, which is
+    /// the honest answer: at such a position there is no top-heaviness for the
+    /// wider slice to shave off.
+    static func transitionTagValue(position: Position, topSalaries: [Int], capMode: CapMode, salaryCap: Int) -> Int {
+        switch capMode {
+        case .simple, .realistic:
+            let value = transitionTagValue(position: position, topSalaries: topSalaries)
+            return max(value, Int(franchiseTagFloorShare * Double(salaryCap)))
+        case .sandbox:
+            return 0
+        }
+    }
+
     /// The tag floor, as a share of the cap. `5_000 / 265_000` — the number both
     /// screens hardcoded, expressed so it grows with the league.
     static let franchiseTagFloorShare = 5_000.0 / Double(openingSalaryCap)
+
+    /// What being tagged costs a player, in morale.
+    ///
+    /// One number for both tags, because it was one number before either name
+    /// existed: `applyFranchiseTag` has always taken 10 (R22, "no player wants
+    /// the tag") and the transition tag is the same insult — a one-year tender
+    /// in place of the long deal he was playing for. It is named rather than
+    /// written twice so the two tags cannot end up disagreeing about how much a
+    /// man minds.
+    static let tagMoraleCost = 10
 
     /// **Apply the franchise tag — a decision about NEXT league year** (#127).
     ///
@@ -2138,7 +2198,7 @@ enum ContractEngine {
         let priorYears = player.contractYearsRemaining
         player.contractYearsRemaining = Swift.max(1, player.contractYearsRemaining)
         player.isFranchiseTagged = true
-        player.morale = Swift.max(0, player.morale - 10)
+        player.morale = Swift.max(0, player.morale - tagMoraleCost)
 
         // The restructure receipt is deliberately LEFT ALONE. It describes money
         // the club converted out of the salary it is still paying this year, and
@@ -2262,7 +2322,102 @@ enum ContractEngine {
         guard player.isFranchiseTagged else { return }
 
         rescindFranchiseTagBooks(player: player, careerID: careerID)
-        player.morale = Swift.min(100, player.morale + 10)
+        player.morale = Swift.min(100, player.morale + tagMoraleCost)
+    }
+
+    // MARK: - Transition Tag
+
+    /// **Apply the transition tag** — the same shape as ``applyFranchiseTag``,
+    /// and different in exactly one thing that matters: it does not stop anyone
+    /// else signing him.
+    ///
+    /// What the two share, and share deliberately:
+    ///
+    /// * the club's books are untouched. The tag is a decision about the league
+    ///   year that has not opened; the money is a forward promise settled by
+    ///   `FreeAgencyEngine.settleTransitionTags` at the rollover, exactly as the
+    ///   franchise tag's is. Nothing here writes `annualSalary` or
+    ///   `Team.currentCapUsage` — see the long note on `applyFranchiseTag` for
+    ///   the bug that shape exists to prevent.
+    /// * the contract clock is floored at 1 and the pre-tag value is stashed, so
+    ///   ``removeTransitionTag`` is an exact undo rather than an approximate one.
+    /// * ``tagMoraleCost``.
+    ///
+    /// What differs is the whole feature: the row this writes carries an
+    /// OFFER SHEET slot. A rival club may put a contract in front of the tagged
+    /// man (`FreeAgencyEngine.openTransitionOfferSheet`), and the club that
+    /// tagged him then has one decision to make — match those terms, or lose him
+    /// for nothing at the rollover. The franchise tag has no such slot, which is
+    /// why the two cannot share a ledger row.
+    ///
+    /// **Not booked into `CommittedCapLedger`.** That table's `Kind` has two
+    /// cases, `.franchiseTag` and `.deferredDeal`, and this promise is neither;
+    /// filing it under either name would make `settleFranchiseTags` settle it as
+    /// something it is not. It lives in ``TransitionTagLedger`` instead — see
+    /// that type's note for what that costs.
+    ///
+    /// - Parameter tagValue: the price the user was quoted, from
+    ///   ``transitionTagValue(position:topSalaries:capMode:salaryCap:)``. Stored,
+    ///   not re-derived later, for the reason `settleFranchiseTags` documents at
+    ///   length: a tag that settles dearer than the screen said is the dishonesty
+    ///   the forward ledger exists to end.
+    /// - Parameter bindingSeason: the league year the tag charges —
+    ///   `career.currentSeason + 1`, the same arithmetic the franchise tag uses.
+    static func applyTransitionTag(
+        player: Player,
+        tagValue: Int,
+        position: Position,
+        team: Team?,
+        capMode: CapMode,
+        bindingSeason: Int,
+        careerID: UUID
+    ) {
+        _ = team      // The club's books are deliberately untouched.
+        _ = capMode
+
+        let priorYears = player.contractYearsRemaining
+        player.contractYearsRemaining = Swift.max(1, player.contractYearsRemaining)
+        player.morale = Swift.max(0, player.morale - tagMoraleCost)
+
+        TransitionTagLedger.upsert(
+            TransitionTagLedger.Tag(
+                playerID: player.id,
+                playerName: player.fullName,
+                positionRaw: position.rawValue,
+                price: Swift.max(0, tagValue),
+                bindingSeason: bindingSeason,
+                priorYears: priorYears < player.contractYearsRemaining ? priorYears : nil,
+                canvassed: false,
+                offer: nil,
+                answer: nil
+            ),
+            careerID: careerID
+        )
+    }
+
+    /// **Rescind the transition tag — the exact undo of ``applyTransitionTag``.**
+    ///
+    /// Gives back the flag, the morale and the one year of club control the tag
+    /// floored the clock at, and nothing else, because nothing else was ever
+    /// taken. A missing `priorYears` leaves the clock alone, which is the safe
+    /// direction for the same reason `rescindFranchiseTagBooks` says it is: a
+    /// rostered man under contract beats a rostered man stranded at 0 years.
+    ///
+    /// **It also tears up any offer sheet on him.** The sheet is a bid for a
+    /// tagged player; withdraw the tag and there is nothing to bid on. This is
+    /// the one thing the user can do that makes an outstanding match-or-lose
+    /// decision go away, and it costs him the man at the rollover in the
+    /// ordinary way — his deal expires and he reaches the market.
+    static func removeTransitionTag(player: Player, team: Team?, capMode: CapMode, careerID: UUID) {
+        _ = team
+        _ = capMode
+        guard let row = TransitionTagLedger.tag(playerID: player.id, careerID: careerID) else { return }
+
+        if let priorYears = row.priorYears {
+            player.contractYearsRemaining = priorYears
+        }
+        TransitionTagLedger.remove(playerID: player.id, careerID: careerID)
+        player.morale = Swift.min(100, player.morale + tagMoraleCost)
     }
 
     /// Takes a franchise tag off the club's books — the flag, the forward
@@ -2811,5 +2966,240 @@ enum ContractEngine {
                 )
             )
         }
+    }
+}
+
+// MARK: - Transition Tag Ledger
+
+/// **Where a transition tag lives** — the tag itself, the offer sheet a rival
+/// club may put on it, and the one answer the tagging club owes.
+///
+/// ## Why this is a table of its own
+///
+/// The franchise tag needs two pieces of state and the game already has homes
+/// for both: `Player.isFranchiseTagged` says the man is tagged, and a
+/// `CommittedCapLedger` forward row says what the tag will cost when the league
+/// year opens. The transition tag can borrow neither.
+///
+/// * `Player.isFranchiseTagged` means *franchise*-tagged and is read that way in
+///   a dozen places — the expiry loop skips it, the trade market refuses to move
+///   a man carrying it, the roster row draws a badge for it. Setting it for a
+///   transition tag would make every one of those sentences false. `Player` is
+///   a SwiftData model in `Domain/`, so a second flag is a schema change and is
+///   NOT this lane's to make; see the hand-off note at the foot of this type.
+/// * `CommittedCapLedger.Kind` has exactly two cases and this promise is neither
+///   of them. Filing it as `.franchiseTag` would have `settleFranchiseTags`
+///   settle it as a franchise tag; filing it as `.deferredDeal` would have that
+///   function write a negotiated extension's `Contract` row over it. A name
+///   already used for another quantity does not get reused.
+///
+/// And there is a third reason, which would hold even if the first two did not:
+/// an offer sheet has a bidder, a price, a term and an answer, and no field on
+/// `Reservation` carries any of them.
+///
+/// ## What it costs
+///
+/// The forward money in this table is invisible to the cap surfaces that read
+/// `CommittedCapLedger.forwardCoverage` (`CapOverviewView`, `ContractTimelineView`).
+/// `FranchiseTagView`'s own next-year banner reads this table directly and is
+/// therefore right; the others understate next league year by the tag price of
+/// any transition-tagged man, and treat him as an expiring contract worth
+/// nothing. That is a real gap and it is written down rather than papered over:
+/// closing it means one enum case (`CommittedCapLedger.Kind.transitionTag`) in a
+/// file this lane does not own.
+///
+/// ## Determinism and scope
+///
+/// Career-scoped through `CareerScopedDefaults.key`, exactly like
+/// `CommittedCapLedger`, so no save can read another's tags. The base key is not
+/// yet on `CareerScopedDefaults.keys` — that file belongs to another lane, and
+/// the precedent is `FranchiseTagView`'s own price-memory key, which is in the
+/// same position. The only cost of the omission is that a deleted save leaves
+/// one small blob behind; it belongs on the purge list.
+enum TransitionTagLedger {
+
+    // MARK: - Rows
+
+    /// A rival club's contract offer to a transition-tagged player.
+    ///
+    /// Terms are the whole of it: matching means the tagging club takes on
+    /// exactly these, which is what makes an offer sheet a weapon rather than a
+    /// formality. Nothing in here is a share or a multiplier — the salary and
+    /// the term are what `FreeAgencyEngine.openTransitionOfferSheet` drew, and
+    /// they are stored so the settlement charges the number the user was shown.
+    struct OfferSheet: Codable, Equatable {
+        var teamID: UUID
+        var teamAbbreviation: String
+        /// Per year, in thousands — the unit every cap number in the game uses.
+        var annualSalary: Int
+        var years: Int
+        /// The league year the sheet was filed in, for the same
+        /// cannot-outlive-its-season reason `CommittedCapLedger.Reservation`
+        /// carries one.
+        var filedSeason: Int
+    }
+
+    /// The tagging club's answer to a sheet. Absent means UNANSWERED, and that
+    /// is all it means — the settlement treats it as a decline because the
+    /// alternative is a club that keeps a player by ignoring the post, but
+    /// nothing else in the game reads a blank as a refusal.
+    enum Answer: String, Codable {
+        case matched
+        case declined
+    }
+
+    /// One transition tag.
+    struct Tag: Codable, Equatable, Identifiable {
+        var playerID: UUID
+        var playerName: String
+        /// `Position.rawValue`. Stored as the raw string so a future position
+        /// rename cannot make an old save's row undecodable.
+        var positionRaw: String
+        /// The tender, in thousands — the top-10 positional average the user was
+        /// quoted, floored and cap-mode-aware.
+        var price: Int
+        var bindingSeason: Int
+        /// `Player.contractYearsRemaining` before the tag floored it, when the
+        /// tag RAISED it. See `ContractEngine.applyTransitionTag`.
+        var priorYears: Int?
+        /// Whether the market has had its one look at this man. The offer-sheet
+        /// round is not re-run on every screen load: a club that passed has
+        /// passed, and re-rolling until something lands would make the tag a
+        /// slot machine the user could feed by reopening a screen.
+        var canvassed: Bool
+        var offer: OfferSheet?
+        var answer: Answer?
+
+        var id: UUID { playerID }
+
+        var position: Position? { Position(rawValue: positionRaw) }
+
+        /// A decision is outstanding while a sheet is on the table unanswered.
+        var isDecisionOutstanding: Bool { offer != nil && answer == nil }
+
+        /// Whether the man stays. No sheet, or a matched one.
+        var isRetained: Bool { offer == nil || answer == .matched }
+
+        /// What he is paid next league year if he stays, in thousands: the
+        /// matched sheet's salary where there is one, the tender otherwise.
+        var retainedSalary: Int {
+            answer == .matched ? (offer?.annualSalary ?? price) : price
+        }
+
+        /// How many years of that. A tender is one year by definition; a matched
+        /// sheet is however long the sheet was.
+        var retainedYears: Int {
+            answer == .matched ? max(1, offer?.years ?? 1) : 1
+        }
+    }
+
+    // MARK: - Storage
+
+    /// Base key — namespaced per save through `CareerScopedDefaults.key`.
+    static let defaultsKey = "transitionTagCommitments"
+
+    private static func storageKey(_ careerID: UUID) -> String {
+        CareerScopedDefaults.key(defaultsKey, careerID: careerID)
+    }
+
+    private static func table(careerID: UUID) -> [String: Tag] {
+        guard let data = UserDefaults.standard.data(forKey: storageKey(careerID)),
+              let rows = try? JSONDecoder().decode([String: Tag].self, from: data)
+        else { return [:] }
+        return rows
+    }
+
+    private static func write(_ rows: [String: Tag], careerID: UUID) {
+        let key = storageKey(careerID)
+        guard !rows.isEmpty else {
+            UserDefaults.standard.removeObject(forKey: key)
+            return
+        }
+        guard let data = try? JSONEncoder().encode(rows) else { return }
+        UserDefaults.standard.set(data, forKey: key)
+    }
+
+    // MARK: - Reads
+
+    /// Every transition tag this save holds, dearest first.
+    static func tags(careerID: UUID?) -> [Tag] {
+        guard let careerID else { return [] }
+        return table(careerID: careerID).values.sorted { $0.price > $1.price }
+    }
+
+    /// This save's transition tag on one player, if any.
+    static func tag(playerID: UUID, careerID: UUID?) -> Tag? {
+        guard let careerID else { return nil }
+        return table(careerID: careerID)[playerID.uuidString]
+    }
+
+    /// The men a rollover binding `bindingSeason` must not let the expiry loop
+    /// touch — the transition tag's stand-in for `Player.isFranchiseTagged`.
+    ///
+    /// `<=` and not `==`, matching `CommittedCapLedger.consumeForward`: a row
+    /// from a league year that somehow never got settled is settled late rather
+    /// than leaving a man on the books forever.
+    static func taggedPlayerIDs(careerID: UUID?, bindingSeason: Int) -> Set<UUID> {
+        Set(tags(careerID: careerID).filter { $0.bindingSeason <= bindingSeason }.map(\.playerID))
+    }
+
+    /// Whether this save has a transition tag out. One per offseason, the same
+    /// way the franchise tag is one per offseason.
+    static func hasTagOutstanding(careerID: UUID?) -> Bool {
+        !tags(careerID: careerID).isEmpty
+    }
+
+    // MARK: - Writes
+
+    /// Records a tag, replacing whatever row that player already had.
+    static func upsert(_ tag: Tag, careerID: UUID?) {
+        guard let careerID else { return }
+        var rows = table(careerID: careerID)
+        rows[tag.playerID.uuidString] = tag
+        write(rows, careerID: careerID)
+    }
+
+    static func remove(playerID: UUID, careerID: UUID?) {
+        guard let careerID else { return }
+        var rows = table(careerID: careerID)
+        guard rows.removeValue(forKey: playerID.uuidString) != nil else { return }
+        write(rows, careerID: careerID)
+    }
+
+    /// **Answers an outstanding offer sheet.**
+    ///
+    /// Records the decision and nothing else: matching does not move a dollar
+    /// today, because the sheet — like the tender it was filed against — charges
+    /// the league year that has not opened. `FreeAgencyEngine.settleTransitionTags`
+    /// is where either answer becomes real.
+    ///
+    /// Refuses to answer a row with no sheet on it, and refuses to change an
+    /// answer once given: a decision the user could flip until the rollover is
+    /// not a decision, and "let him go" is the half of this feature that has to
+    /// hurt.
+    @discardableResult
+    static func answer(_ answer: Answer, playerID: UUID, careerID: UUID?) -> Bool {
+        guard let careerID, var row = tag(playerID: playerID, careerID: careerID),
+              row.offer != nil, row.answer == nil
+        else { return false }
+        row.answer = answer
+        upsert(row, careerID: careerID)
+        return true
+    }
+
+    /// **The rollover's read.** Returns every tag binding at or before
+    /// `bindingSeason` and REMOVES it in the same call.
+    ///
+    /// Read-and-delete rather than read-then-delete for the reason
+    /// `CommittedCapLedger.consumeForward` gives: a caller that settled the rows
+    /// and then failed to clear them would settle the same tag twice.
+    @discardableResult
+    static func consume(careerID: UUID?, bindingSeason: Int) -> [Tag] {
+        guard let careerID else { return [] }
+        let rows = table(careerID: careerID)
+        let due = rows.values.filter { $0.bindingSeason <= bindingSeason }
+        guard !due.isEmpty else { return [] }
+        write(rows.filter { $0.value.bindingSeason > bindingSeason }, careerID: careerID)
+        return due.sorted { $0.price > $1.price }
     }
 }

@@ -47,7 +47,7 @@ struct FranchiseTagView: View {
 
     /// The tag the user has asked for and not yet agreed to.
     ///
-    /// A franchise tag is the least reversible thing on this screen — one per
+    /// A tag is the least reversible thing on this screen — one per
     /// offseason, and it books next season's cap the moment it lands — and it
     /// used to commit on the first tap of a gold pill that sat on every row.
     /// `UI_REDESIGN_VISION.md` §"Irreversibility always confirms" names this
@@ -59,8 +59,25 @@ struct FranchiseTagView: View {
     /// cannot quote a price that has since been recomputed.
     private struct PendingTag {
         let player: Player
+        /// Which of the two tags. Both are irreversible and they cost different
+        /// money, so the confirmation has to know which one it is describing.
+        let kind: TagKind
         let tagCost: Int
     }
+
+    /// **The transition tags this club holds**, read from `TransitionTagLedger`
+    /// on every load — the tag sets no flag on `Player` (see that type's note),
+    /// so this table is the only thing that knows.
+    @State private var transitionTags: [TransitionTagLedger.Tag] = []
+
+    /// The answer the user has chosen and not yet confirmed.
+    private struct PendingAnswer {
+        let row: TransitionTagLedger.Tag
+        let answer: TransitionTagLedger.Answer
+    }
+
+    @State private var pendingAnswer: PendingAnswer?
+    @State private var showAnswerConfirmation = false
 
     var body: some View {
         ZStack {
@@ -71,8 +88,9 @@ struct FranchiseTagView: View {
                     ScrollView {
                         VStack(spacing: 24) {
                             capBanner
+                            outstandingDecisionBanner
                             tagRulesBanner
-                            if !taggedPlayers.isEmpty {
+                            if !taggedPlayers.isEmpty || !liveTransitionTags.isEmpty {
                                 taggedSection
                             }
                             expiringPlayersSection
@@ -89,29 +107,52 @@ struct FranchiseTagView: View {
                 }
             }
         }
-        .navigationTitle("Franchise Tag")
+        // The screen spends one tag and there are two of them, so it is no
+        // longer "Franchise Tag". The task that routes here is still called
+        // Franchise Tag Decisions — that string lives in another lane's file and
+        // is listed in `followUp`.
+        .navigationTitle("Tag Decisions")
         .navigationBarTitleDisplayMode(.large)
         .toolbarColorScheme(.dark, for: .navigationBar)
         .task {
             loadData()
         }
-        .alert("Skip Franchise Tag?", isPresented: $showSkipConfirmation) {
+        .alert("Skip Your Tag?", isPresented: $showSkipConfirmation) {
             Button("Cancel", role: .cancel) { }
             Button("Skip", role: .destructive) {
                 CareerScopedDefaults.set(true, "franchiseTagVisited")
                 dismiss()
             }
         } message: {
-            Text("Are you sure? You won't be able to franchise tag any player this offseason.")
+            Text("Are you sure? You won't be able to franchise or transition tag any player this offseason.")
         }
-        .alert("Franchise tag \(pendingTag?.player.fullName ?? "this player")?", isPresented: $showTagConfirmation, presenting: pendingTag) { pending in
+        .alert("\(pendingTag?.kind.title ?? "Franchise") tag \(pendingTag?.player.fullName ?? "this player")?", isPresented: $showTagConfirmation, presenting: pendingTag) { pending in
             Button("Cancel", role: .cancel) { pendingTag = nil }
             Button("Apply Tag") {
-                applyTag(to: pending.player, tagCost: pending.tagCost)
+                applyTag(to: pending.player, kind: pending.kind, tagCost: pending.tagCost)
                 pendingTag = nil
             }
         } message: { pending in
             Text(tagConfirmationTerms(for: pending))
+        }
+        .alert(answerConfirmationTitle, isPresented: $showAnswerConfirmation, presenting: pendingAnswer) { pending in
+            Button("Cancel", role: .cancel) { pendingAnswer = nil }
+            // Two buttons rather than one with a computed role: only the
+            // decline is destructive, and letting him go is exactly the kind of
+            // thing that should be wearing the destructive colour.
+            if pending.answer == .matched {
+                Button("Match It") {
+                    answerOfferSheet(pending)
+                    pendingAnswer = nil
+                }
+            } else {
+                Button("Let Him Go", role: .destructive) {
+                    answerOfferSheet(pending)
+                    pendingAnswer = nil
+                }
+            }
+        } message: { pending in
+            Text(answerConfirmationTerms(for: pending))
         }
         .sheet(item: $tagBreakdown) { request in
             TagBreakdownSheet(request: request, tagSeasonLabel: seasonLabel(nextSeason))
@@ -301,8 +342,9 @@ struct FranchiseTagView: View {
     /// counted at the number the user was quoted rather than at the salary his
     /// expiring deal happens to still be carrying.
     private var committedNextYear: Int {
+        let transitionIDs = Set(liveTransitionTags.map(\.playerID))
         let underContract = teamPlayers
-            .filter { $0.contractYearsRemaining > 1 && !$0.isFranchiseTagged }
+            .filter { $0.contractYearsRemaining > 1 && !$0.isFranchiseTagged && !transitionIDs.contains($0.id) }
             .reduce(0) { $0 + $1.annualSalary }
         // Walked from the ROSTER rather than summed straight off the ledger, so
         // a man who was tagged and then released still owes nothing here. His
@@ -310,7 +352,16 @@ struct FranchiseTagView: View {
         // takes everything due, matched or not), and reading the ledger blind
         // would keep charging the club for a player it no longer employs.
         let tags = taggedPlayers.reduce(0) { $0 + tagCommitment(for: $1) }
-        return underContract + tags
+        // The transition tag is counted at exactly what
+        // `FreeAgencyEngine.settleTransitionTags` would charge if the league year
+        // opened right now: the tender where no sheet has been filed, the
+        // MATCHED sheet's salary where one has been matched, and nothing at all
+        // where a sheet stands unmatched — including one the user has not
+        // answered, because an unanswered sheet settles as a decline. The row on
+        // the screen says so in words; the banner must not quietly assume he is
+        // being kept.
+        let transition = liveTransitionTags.reduce(0) { $0 + ($1.isRetained ? $1.retainedSalary : 0) }
+        return underContract + tags + transition
     }
 
     private var projectedNextYearSpace: Int { projectedNextYearCap - committedNextYear }
@@ -318,6 +369,54 @@ struct FranchiseTagView: View {
     /// `2027`, never `2 027` — a league year is a name, not a quantity, so it
     /// must not pick up the locale's group separator.
     private func seasonLabel(_ season: Int) -> String { String(season) }
+
+    // MARK: - The Outstanding Decision
+
+    /// **How the match-or-lose decision reaches the user.**
+    ///
+    /// A banner at the top of the screen, above the rules and above every row,
+    /// and deliberately NOT an alert. The sheet is filed inside `applyTag`,
+    /// which itself runs from the tag confirmation's button — and an alert
+    /// raised while another alert is still dismissing is the one that silently
+    /// never appears. A banner cannot fail to present, survives the user
+    /// leaving and coming back, and is still there on the next visit if he
+    /// walked away without answering.
+    ///
+    /// It states the deadline because the deadline is the whole of the danger:
+    /// the rollover settles an unanswered sheet as a decline. The buttons are
+    /// on the man's row rather than here, so answering always happens next to
+    /// the terms being answered.
+    @ViewBuilder
+    private var outstandingDecisionBanner: some View {
+        let outstanding = liveTransitionTags.filter(\.isDecisionOutstanding)
+        if !outstanding.isEmpty {
+            VStack(alignment: .leading, spacing: DSSpacing.xxs) {
+                ForEach(outstanding) { row in
+                    HStack(alignment: .top, spacing: DSSpacing.xxs) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(Color.warning)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("\(row.offer?.teamAbbreviation ?? "A rival club") have filed an offer sheet on \(row.playerName)")
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(Color.textPrimary)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Text("Match those terms on his row below, or let him go. If you do neither before the \(seasonLabel(nextSeason)) league year opens, he leaves and you get nothing.")
+                                .font(.caption)
+                                .foregroundStyle(Color.textSecondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(DSSpacing.sm)
+            .background(Color.warning.opacity(0.10), in: RoundedRectangle(cornerRadius: DSCornerRadius.inline))
+            .overlay(
+                RoundedRectangle(cornerRadius: DSCornerRadius.inline)
+                    .strokeBorder(Color.warning.opacity(0.4), lineWidth: 1)
+            )
+        }
+    }
 
     // MARK: - Rules Banner
 
@@ -339,10 +438,10 @@ struct FranchiseTagView: View {
             Image(systemName: "info.circle.fill")
                 .foregroundStyle(Color.accentGold)
             VStack(alignment: .leading, spacing: 2) {
-                Text("Franchise Tag Rules")
+                Text("Tag Rules")
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(Color.textPrimary)
-                Text("You can apply up to 1 franchise tag per season. A tagged player finishes his current deal, then plays \(seasonLabel(nextSeason)) at the average of the top 5 salaries at his position — so the tag charges the \(seasonLabel(nextSeason)) cap, not this year's. Re-signing a man through Contact Agent instead replaces his expiring deal on the spot: it charges your \(seasonLabel(career.currentSeason)) space the moment he signs, and commits \(seasonLabel(nextSeason)) on top.")
+                Text("You have one tag per offseason and two ways to spend it. Either way the man finishes his current deal and then plays \(seasonLabel(nextSeason)) on the tag, so it charges the \(seasonLabel(nextSeason)) cap and not this year's.\n\nFRANCHISE — the average of the top \(ContractEngine.franchiseTagPoolSize) salaries at his position. Nobody else may sign him.\n\nTRANSITION — the average of the top \(ContractEngine.transitionTagPoolSize), which is the same list read deeper and so never dearer. It buys you the right to MATCH, not the right to refuse: a rival club may put a contract in front of him, and you either take on those exact terms or lose him for nothing.\n\nRe-signing a man through Contact Agent instead replaces his expiring deal on the spot: it charges your \(seasonLabel(career.currentSeason)) space the moment he signs, and commits \(seasonLabel(nextSeason)) on top.")
                     .font(.caption)
                     .foregroundStyle(Color.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -360,12 +459,191 @@ struct FranchiseTagView: View {
             VStack(spacing: 0) {
                 ForEach(Array(taggedPlayers.enumerated()), id: \.element.id) { index, player in
                     taggedPlayerRow(player)
-                    if index < taggedPlayers.count - 1 {
+                    if index < taggedPlayers.count - 1 || !liveTransitionTags.isEmpty {
                         Divider()
                             .overlay(Color.surfaceBorder.opacity(0.5))
                             .padding(.horizontal, 8)
                     }
                 }
+                ForEach(Array(liveTransitionTags.enumerated()), id: \.element.id) { index, row in
+                    transitionTaggedRow(row)
+                    if index < liveTransitionTags.count - 1 {
+                        Divider()
+                            .overlay(Color.surfaceBorder.opacity(0.5))
+                            .padding(.horizontal, 8)
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: - The Transition Row, and the decision on it
+
+    /// **Where the match-or-lose decision lives.**
+    ///
+    /// It is on the row rather than behind a notification because the row is the
+    /// only thing on this screen that survives the user walking away and coming
+    /// back — and an unanswered sheet settles as a decline, so the decision has
+    /// to still be there when he returns. ``outstandingDecisionBanner`` points
+    /// at it from the top of the screen; the answering happens here, beside the
+    /// terms being answered.
+    ///
+    /// Five states, and the row says which one it is in:
+    ///
+    /// * **Not yet canvassed.** The league has not looked at him.
+    /// * **Nobody came.** The tender stands; he plays next league year on it.
+    /// * **A sheet is on the table.** Both prices, both consequences, two
+    ///   buttons, and the deadline stated — the new league year.
+    /// * **Matched.** The club took the sheet's terms; the row prints them.
+    /// * **Declined.** He leaves at the rollover and the club gets nothing.
+    @ViewBuilder
+    private func transitionTaggedRow(_ row: TransitionTagLedger.Tag) -> some View {
+        let player = teamPlayers.first { $0.id == row.playerID }
+
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 12) {
+                if let position = row.position {
+                    positionBadge(position)
+                }
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(row.playerName)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(Color.textPrimary)
+                        .lineLimit(1)
+                    HStack(spacing: 8) {
+                        Text("TRANSITION")
+                            .font(.system(size: DSType.Size.micro, weight: .bold))
+                            .foregroundStyle(Color.accentBlue)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color.accentBlue.opacity(0.18), in: Capsule())
+                        if let player {
+                            Text("Age \(player.age)")
+                                .font(.caption)
+                                .foregroundStyle(Color.textTertiary)
+                            Text("\(player.overall) OVR")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(Color.forRating(player.overall))
+                        }
+                    }
+                }
+
+                Spacer()
+
+                Button {
+                    if let player { tagBreakdown = tagBreakdownRequest(for: player, booked: row.price, bookedKind: .transition) }
+                } label: {
+                    VStack(alignment: .trailing, spacing: 2) {
+                        infoCaption("\(seasonLabel(nextSeason)) Tender")
+                        Text(formatMillions(row.price))
+                            .font(.subheadline.weight(.semibold).monospacedDigit())
+                            .foregroundStyle(Color.accentGold)
+                    }
+                    .frame(minHeight: 44)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("\(seasonLabel(nextSeason)) transition tender \(formatMillions(row.price)) for \(row.playerName)")
+                .accessibilityHint("Shows the salaries the tender averages")
+
+                // Remove is offered only while nothing is outstanding. With a
+                // sheet on the table the way out is Let Him Go, which costs the
+                // club exactly what withdrawing the tag would — the man — and
+                // says so, where a quiet Remove would not.
+                if !row.isDecisionOutstanding {
+                    removePill { if let player { removeTransitionTag(from: player) } }
+                }
+            }
+
+            offerSheetPanel(row)
+                .padding(.leading, 46)
+
+            if let player {
+                contactAgentButton(for: player)
+                    .padding(.leading, 46)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+    }
+
+    @ViewBuilder
+    private func offerSheetPanel(_ row: TransitionTagLedger.Tag) -> some View {
+        if let offer = row.offer {
+            let total = offer.annualSalary * max(1, offer.years)
+            VStack(alignment: .leading, spacing: DSSpacing.xxs) {
+                HStack(spacing: DSSpacing.xxs) {
+                    Image(systemName: "envelope.badge.fill")
+                        .font(.caption)
+                        .foregroundStyle(row.answer == nil ? Color.warning : Color.textTertiary)
+                    Text("\(offer.teamAbbreviation) offer sheet — \(formatMillions(offer.annualSalary))/yr for \(offer.years) \(offer.years == 1 ? "year" : "years") (\(formatMillions(total)) total)")
+                        .font(.caption.weight(.semibold).monospacedDigit())
+                        .foregroundStyle(Color.textPrimary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                if row.answer == .matched {
+                    Text("Matched. He stays on \(offer.teamAbbreviation)'s terms: \(formatMillions(offer.annualSalary)) a year for \(offer.years), starting \(seasonLabel(nextSeason)). The tender no longer applies.")
+                        .font(.caption)
+                        .foregroundStyle(Color.success)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else if row.answer == .declined {
+                    Text("Not matched. He signs with \(offer.teamAbbreviation) when the \(seasonLabel(nextSeason)) league year opens, and you get nothing back for him.")
+                        .font(.caption)
+                        .foregroundStyle(Color.danger)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    Text("Match it and you owe \(formatMillions(offer.annualSalary)) a year for \(offer.years) instead of \(formatMillions(row.price)) for one. Decline and he is \(offer.teamAbbreviation)'s for nothing. Answer before the \(seasonLabel(nextSeason)) league year opens — no answer is a decline.")
+                        .font(.caption)
+                        .foregroundStyle(Color.textPrimary)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    HStack(spacing: DSSpacing.xs) {
+                        tagPill(title: "Match Offer", filled: true, tint: Color.accentGold) {
+                            pendingAnswer = PendingAnswer(row: row, answer: .matched)
+                            showAnswerConfirmation = true
+                        }
+                        tagPill(title: "Let Him Go", filled: false, tint: Color.danger) {
+                            pendingAnswer = PendingAnswer(row: row, answer: .declined)
+                            showAnswerConfirmation = true
+                        }
+                        Spacer(minLength: 0)
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(DSSpacing.sm)
+            .background(
+                (row.answer == nil ? Color.warning : Color.backgroundSecondary).opacity(row.answer == nil ? 0.08 : 0.6),
+                in: RoundedRectangle(cornerRadius: DSCornerRadius.inline)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: DSCornerRadius.inline)
+                    .strokeBorder(
+                        row.answer == nil ? Color.warning.opacity(0.3) : Color.surfaceBorder,
+                        lineWidth: 1
+                    )
+            )
+        } else if row.canvassed {
+            HStack(spacing: DSSpacing.xxs) {
+                Image(systemName: "checkmark.shield.fill")
+                    .font(.caption)
+                    .foregroundStyle(Color.success)
+                Text("No club filed an offer sheet. He plays \(seasonLabel(nextSeason)) on the tender.")
+                    .font(.caption)
+                    .foregroundStyle(Color.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        } else {
+            HStack(spacing: DSSpacing.xxs) {
+                Image(systemName: "clock")
+                    .font(.caption)
+                    .foregroundStyle(Color.textTertiary)
+                Text("The league has not looked at him yet.")
+                    .font(.caption)
+                    .foregroundStyle(Color.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }
@@ -408,10 +686,9 @@ struct FranchiseTagView: View {
                 // carrying its booked number with it. It is the one figure on
                 // the screen that does NOT move with the market — the club
                 // agreed a price and owns it — and the sheet is the only place
-                // that can say so next to the five salaries that have moved
-                // since.
+                // that can say so next to the salaries that have moved since.
                 Button {
-                    tagBreakdown = tagBreakdownRequest(for: player, booked: booked)
+                    tagBreakdown = tagBreakdownRequest(for: player, booked: booked, bookedKind: .franchise)
                 } label: {
                     VStack(alignment: .trailing, spacing: 2) {
                         // #127: `annualSalary` is still the EXPIRING deal — the tag has
@@ -422,35 +699,16 @@ struct FranchiseTagView: View {
                         Text(formatMillions(booked))
                             .font(.subheadline.weight(.semibold).monospacedDigit())
                             .foregroundStyle(Color.accentGold)
-                        HStack(spacing: 3) {
-                            Text("\(seasonLabel(nextSeason)) Tag")
-                                .font(.system(size: DSType.Size.caption).weight(.medium))
-                            Image(systemName: "info.circle")
-                                .font(.system(size: DSType.Size.micro, weight: .semibold))
-                        }
-                        .foregroundStyle(Color.textTertiary)
+                        infoCaption("\(seasonLabel(nextSeason)) Tag")
                     }
                     .frame(minHeight: 44)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("\(seasonLabel(nextSeason)) tag \(formatMillions(booked)) for \(player.fullName)")
-                .accessibilityHint("Shows the five salaries the \(player.position.rawValue) tag averages")
+                .accessibilityHint("Shows the \(player.position.rawValue) salaries both tags average")
 
-                Button {
-                    removeTag(from: player)
-                } label: {
-                    Text("Remove")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(Color.danger)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
-                        .background(Color.danger.opacity(0.15), in: Capsule())
-                        .overlay(Capsule().strokeBorder(Color.danger.opacity(0.4), lineWidth: 1))
-                        .frame(minHeight: 44)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
+                removePill { removeTag(from: player) }
             }
 
             // A tag is not a terminal state. The man can still sign a long deal
@@ -491,6 +749,7 @@ struct FranchiseTagView: View {
 
     private func expiringPlayerRow(_ player: Player, isFavourite: Bool) -> some View {
         let tagCost = tagValue(for: player.position)
+        let transitionCost = tagValue(for: player.position, kind: .transition)
         // #127. This used to be `availableCap − tagCost + annualSalary`: next
         // year's tag netted against this year's room, with this year's salary
         // credited back as though the season already played were about to be
@@ -505,6 +764,7 @@ struct FranchiseTagView: View {
         // here has to survive the subtraction the reader does in his head
         // against the banner.
         let capAfterTag = roundedToDisplay(projectedNextYearSpace) - roundedToDisplay(tagCost)
+        let capAfterTransition = roundedToDisplay(projectedNextYearSpace) - roundedToDisplay(transitionCost)
         let recommendation = smartRecommendation(for: player)
         // Read once for the row: the chip renders it and the button speaks it.
         let priceChange = tagPriceChange(for: player.position)
@@ -533,14 +793,16 @@ struct FranchiseTagView: View {
 
                 Spacer()
 
-                // **The derived number now says where it derives from.** The
-                // rules banner states the rule ("the average of the top 5
-                // salaries at his position"); it cannot state the five
+                // **The derived numbers now say where they derive from.** The
+                // rules banner states the rules (the average of the top 5, and
+                // of the top 10, at his position); it cannot state the
                 // salaries, and until this sheet existed nothing on the screen
                 // could — which is also why the price moving between two visits
-                // read as the app changing its mind.
+                // read as the app changing its mind. ONE button for both
+                // figures, because one sheet explains both: they are the same
+                // sorted list read to a different depth.
                 Button {
-                    tagBreakdown = tagBreakdownRequest(for: player, booked: nil)
+                    tagBreakdown = tagBreakdownRequest(for: player, booked: nil, bookedKind: nil)
                 } label: {
                     VStack(alignment: .trailing, spacing: 2) {
                         // Caption first, figure under it. A column whose small
@@ -549,13 +811,7 @@ struct FranchiseTagView: View {
                         // dollars it introduces, which is the order the eye
                         // wants and the order every other labelled figure on
                         // this screen already uses.
-                        HStack(spacing: 3) {
-                            Text("Tag Cost")
-                                .font(.system(size: DSType.Size.caption).weight(.medium))
-                            Image(systemName: "info.circle")
-                                .font(.system(size: DSType.Size.micro, weight: .semibold))
-                        }
-                        .foregroundStyle(Color.textTertiary)
+                        infoCaption("Tag Cost")
                         // Not gold. Eight rows priced in the screen's emphasis
                         // colour made twenty gold elements out of a screen with one
                         // decision on it, and a price the club pays at most once is
@@ -566,6 +822,14 @@ struct FranchiseTagView: View {
                         Text(formatMillions(tagCost))
                             .font(.subheadline.weight(.semibold).monospacedDigit())
                             .foregroundStyle(hasUsedTag ? Color.textTertiary : Color.textPrimary)
+                        // The transition price, smaller and under it: it is the
+                        // same decision priced a second way, not a second
+                        // decision. It is only ever at or below the franchise
+                        // figure — ranks 6-10 cannot raise an average of ranks
+                        // 1-5 — so the eye reads the pair as "or, cheaper".
+                        Text("or \(formatMillions(transitionCost)) transition")
+                            .font(.system(size: DSType.Size.micro, weight: .medium).monospacedDigit())
+                            .foregroundStyle(Color.textTertiary)
                         if let priceChange {
                             tagChangeChip(priceChange)
                         }
@@ -574,8 +838,8 @@ struct FranchiseTagView: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel(spokenTagCost(tagCost, for: player, change: priceChange))
-                .accessibilityHint("Shows the five salaries the \(player.position.rawValue) tag averages")
+                .accessibilityLabel(spokenTagCost(tagCost, transition: transitionCost, for: player, change: priceChange))
+                .accessibilityHint("Shows the \(player.position.rawValue) salaries both tags average")
 
                 if hasUsedTag {
                     // Already used the tag — show disabled state
@@ -585,31 +849,17 @@ struct FranchiseTagView: View {
                         .padding(.horizontal, 12)
                         .padding(.vertical, 6)
                         .background(Color.backgroundTertiary, in: Capsule())
-                } else {
-                    Button {
-                        pendingTag = PendingTag(player: player, tagCost: tagCost)
-                        showTagConfirmation = true
-                    } label: {
-                        // One tag, eight rows: a filled gold pill on every one
-                        // of them reads as eight primary actions for a resource
-                        // the club has exactly one of. Only the favourite is
-                        // filled; the rest are the same action, offered rather
-                        // than urged.
-                        Text("Apply Tag")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(isFavourite ? Color.backgroundPrimary : Color.accentGold)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 6)
-                            .background(
-                                isFavourite ? Color.accentGold : Color.accentGold.opacity(0.10),
-                                in: Capsule()
-                            )
-                            .overlay(Capsule().strokeBorder(Color.accentGold.opacity(isFavourite ? 0 : 0.45), lineWidth: 1))
-                            .frame(minHeight: 44)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
                 }
+            }
+
+            if !hasUsedTag {
+                tagChoiceRow(
+                    player: player,
+                    isFavourite: isFavourite,
+                    tagCost: tagCost,
+                    transitionCost: transitionCost
+                )
+                .padding(.leading, 46)
             }
 
             // Recommendation. `textPrimary`, not secondary: this is the only
@@ -635,10 +885,18 @@ struct FranchiseTagView: View {
                     Image(systemName: "dollarsign.circle")
                         .font(.caption)
                         .foregroundStyle(Color.textTertiary)
-                    Text("\(seasonLabel(nextSeason)) space after tag: \(formatMillions(capAfterTag))")
+                    Text("\(seasonLabel(nextSeason)) space after: \(formatMillions(capAfterTag)) franchise")
                         .font(.caption.monospacedDigit())
                         .foregroundStyle(capAfterTag >= 0 ? Color.textTertiary : Color.danger)
-                    if capAfterTag < 0 {
+                    // The transition figure is what the TENDER leaves. A matched
+                    // offer sheet costs more, and how much more is not knowable
+                    // until a club files one — so the line quotes the number the
+                    // club is certain to owe and the row's panel quotes the
+                    // other when it exists.
+                    Text("\u{00B7} \(formatMillions(capAfterTransition)) transition")
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(capAfterTransition >= 0 ? Color.textTertiary : Color.danger)
+                    if capAfterTag < 0 && capAfterTransition < 0 {
                         Text("OVER CAP")
                             .font(.caption2.weight(.bold))
                             .foregroundStyle(Color.danger)
@@ -659,6 +917,100 @@ struct FranchiseTagView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
+    }
+
+    /// **The two ways to spend the one tag, side by side**, because that is the
+    /// choice: not "tag or not" twice over. They sit under the row rather than
+    /// beside the price for the plain reason that two pills and a two-line price
+    /// column do not fit a phone's width.
+    ///
+    /// One tag, eight rows: a filled gold pill on every one of them reads as
+    /// eight primary actions for a resource the club has exactly one of. Only
+    /// the favourite's FRANCHISE pill is filled — the tag that actually keeps
+    /// the man, on the man the screen endorses; the rest are the same actions,
+    /// offered rather than urged.
+    private func tagChoiceRow(
+        player: Player,
+        isFavourite: Bool,
+        tagCost: Int,
+        transitionCost: Int
+    ) -> some View {
+        HStack(spacing: 8) {
+            tagPill(
+                title: "Franchise \(formatMillions(tagCost))",
+                filled: isFavourite,
+                tint: Color.accentGold
+            ) {
+                pendingTag = PendingTag(player: player, kind: .franchise, tagCost: tagCost)
+                showTagConfirmation = true
+            }
+            tagPill(
+                title: "Transition \(formatMillions(transitionCost))",
+                filled: false,
+                tint: Color.accentBlue
+            ) {
+                pendingTag = PendingTag(player: player, kind: .transition, tagCost: transitionCost)
+                showTagConfirmation = true
+            }
+            Spacer(minLength: 0)
+        }
+    }
+
+    /// The small grey heading over a tappable figure, with the affordance that
+    /// says it opens something.
+    ///
+    /// Three rows print one of these — Tag Cost, the booked franchise tag, the
+    /// booked transition tender — and until this existed there were three
+    /// copies of the same six lines. One copy, so a caption cannot end up
+    /// styled three ways.
+    private func infoCaption(_ text: String) -> some View {
+        HStack(spacing: DSSpacing.xxs) {
+            Text(text)
+                .font(.system(size: DSType.Size.caption).weight(.medium))
+            Image(systemName: "info.circle")
+                .font(.system(size: DSType.Size.micro, weight: .semibold))
+        }
+        .foregroundStyle(Color.textTertiary)
+    }
+
+    /// Take the tag off. One shape for both tags: a franchise tag and a
+    /// transition tag are withdrawn by the same gesture and there is no reason
+    /// for the two buttons to be able to drift apart.
+    private func removePill(action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text("Remove")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(Color.danger)
+                .padding(.horizontal, DSSpacing.sm)
+                .padding(.vertical, 6)
+                .background(Color.danger.opacity(0.15), in: Capsule())
+                .overlay(Capsule().strokeBorder(Color.danger.opacity(0.4), lineWidth: 1))
+                .frame(minHeight: 44)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    /// One of the Apply pills. Same shape every time so a pair reads as one
+    /// choice with two prices rather than two unrelated buttons.
+    private func tagPill(
+        title: String,
+        filled: Bool,
+        tint: Color,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.caption.weight(.semibold).monospacedDigit())
+                .foregroundStyle(filled ? Color.backgroundPrimary : tint)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(filled ? tint : tint.opacity(0.10), in: Capsule())
+                .overlay(Capsule().strokeBorder(tint.opacity(filled ? 0 : 0.45), lineWidth: 1))
+                .frame(minHeight: 44)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 
     // MARK: - Contact Agent Entry
@@ -909,10 +1261,12 @@ struct FranchiseTagView: View {
 
     // MARK: - Computed Properties
 
-    /// Players on the user's team with expiring contracts (not already tagged).
+    /// Players on the user's team with expiring contracts (not already tagged
+    /// with either tag).
     private var expiringPlayers: [Player] {
-        teamPlayers
-            .filter { $0.contractYearsRemaining <= 1 && !$0.isFranchiseTagged }
+        let transitionIDs = Set(liveTransitionTags.map(\.playerID))
+        return teamPlayers
+            .filter { $0.contractYearsRemaining <= 1 && !$0.isFranchiseTagged && !transitionIDs.contains($0.id) }
             .sorted { $0.overall > $1.overall }
     }
 
@@ -921,9 +1275,22 @@ struct FranchiseTagView: View {
         teamPlayers.filter { $0.isFranchiseTagged }
     }
 
-    /// Whether the team has already used their franchise tag this season.
+    /// This club's transition tags for the league year being decided.
+    ///
+    /// Filtered to men still on the roster: a tagged player who was then traded
+    /// or released leaves an orphaned row behind, and the rollover drops it
+    /// (`TransitionTagLedger.consume` takes everything due, matched or not).
+    /// Showing it would have the screen offer a match-or-lose decision about
+    /// somebody the club no longer employs.
+    private var liveTransitionTags: [TransitionTagLedger.Tag] {
+        let rostered = Set(teamPlayers.map(\.id))
+        return transitionTags.filter { $0.bindingSeason == nextSeason && rostered.contains($0.playerID) }
+    }
+
+    /// Whether the club has already spent its one tag this offseason — either
+    /// one. A club gets one tag, not one of each.
     private var hasUsedTag: Bool {
-        !taggedPlayers.isEmpty
+        !taggedPlayers.isEmpty || !liveTransitionTags.isEmpty
     }
 
     // MARK: - Tag Value Calculation
@@ -942,22 +1309,33 @@ struct FranchiseTagView: View {
     /// for the position the table does not carry. Nothing on the screen asks for
     /// one — `buildTagQuotes` prices exactly the positions the rows are drawn
     /// from — but a miss returning a silent $0 would be a price, and a wrong one.
-    private func tagValue(for position: Position) -> Int {
-        tagQuotes[position]?.price ?? liveTagValue(for: position)
+    private func tagValue(for position: Position, kind: TagKind = .franchise) -> Int {
+        tagQuotes[position]?.price(kind) ?? liveTagValue(for: position, kind: kind)
     }
 
-    private func liveTagValue(for position: Position) -> Int {
+    private func liveTagValue(for position: Position, kind: TagKind) -> Int {
         let positionSalaries = allPlayers
             .filter { $0.position == position && $0.annualSalary > 0 }
             .map { $0.annualSalary }
+        let cap = team?.salaryCap ?? ContractEngine.openingSalaryCap
         // Task #87 / F16: the `capMode:` overload (this screen used to charge a
         // sandbox save a real tag) and the shared cap-relative floor.
-        return ContractEngine.franchiseTagValue(
-            position: position,
-            topSalaries: positionSalaries,
-            capMode: career.capMode,
-            salaryCap: team?.salaryCap ?? ContractEngine.openingSalaryCap
-        )
+        switch kind {
+        case .franchise:
+            return ContractEngine.franchiseTagValue(
+                position: position,
+                topSalaries: positionSalaries,
+                capMode: career.capMode,
+                salaryCap: cap
+            )
+        case .transition:
+            return ContractEngine.transitionTagValue(
+                position: position,
+                topSalaries: positionSalaries,
+                capMode: career.capMode,
+                salaryCap: cap
+            )
+        }
     }
 
     /// Prices every position this screen has to quote, **once per load**.
@@ -969,13 +1347,18 @@ struct FranchiseTagView: View {
     /// whoever is tagged), the answer only changes when `allPlayers` does, and
     /// `allPlayers` only changes in `loadData`. So it is one pass, there.
     ///
-    /// The quote carries the five men behind the number as well as the number,
+    /// The quote carries the men behind the numbers as well as the numbers,
     /// because that is what the breakdown sheet exists to show and re-deriving
     /// it when the sheet opens would be a second, separate walk of the league.
     private func buildTagQuotes() -> [Position: TagQuote] {
+        // Transition-tagged men are in by name and not only by their clock. The
+        // tag floors the clock at 1 so they would fall in anyway, but the row
+        // that quotes a tender must never be able to find no quote — and a
+        // union is cheaper than the bug.
+        let transitionIDs = Set(liveTransitionTags.map(\.playerID))
         let priced = Set(
             teamPlayers
-                .filter { $0.contractYearsRemaining <= 1 || $0.isFranchiseTagged }
+                .filter { $0.contractYearsRemaining <= 1 || $0.isFranchiseTagged || transitionIDs.contains($0.id) }
                 .map(\.position)
         )
         guard !priced.isEmpty else { return [:] }
@@ -999,11 +1382,13 @@ struct FranchiseTagView: View {
 
             // The engine sorts the bare numbers; this sorts the MEN carrying
             // them, so the sheet can name them. The id tiebreak only decides
-            // which of two men on an identical salary is printed — the five
-            // salaries, and therefore the average, are the engine's either way.
-            let topFive = candidates
+            // which of two men on an identical salary is printed — the
+            // salaries, and therefore both averages, are the engine's either
+            // way. Ten deep, because that is what the transition tag takes and
+            // the franchise five are its own first five.
+            let topSalaries = candidates
                 .dsSorted(false, by: { $0.annualSalary }, id: { $0.id.uuidString })
-                .prefix(5)
+                .prefix(ContractEngine.transitionTagPoolSize)
                 .map { player in
                     TagTopSalary(
                         id: player.id,
@@ -1016,12 +1401,21 @@ struct FranchiseTagView: View {
                     )
                 }
 
-            // Both engine overloads, deliberately: the floored/sandbox price is
-            // what the club is charged, the raw average is what the rules banner
-            // describes, and the sheet has to be able to say when the two are
-            // not the same number.
-            let average = ContractEngine.franchiseTagValue(position: position, topSalaries: salaries)
-            let price = ContractEngine.franchiseTagValue(
+            // Both engine overloads for both tags, deliberately: the
+            // floored/sandbox price is what the club is charged, the raw
+            // average is what the rules banner describes, and the sheet has to
+            // be able to say when the two are not the same number. Four calls
+            // into ONE engine average (`ContractEngine.topSalaryAverage`) — the
+            // screen never does the arithmetic itself.
+            let franchiseAverage = ContractEngine.franchiseTagValue(position: position, topSalaries: salaries)
+            let franchisePrice = ContractEngine.franchiseTagValue(
+                position: position,
+                topSalaries: salaries,
+                capMode: career.capMode,
+                salaryCap: salaryCap
+            )
+            let transitionAverage = ContractEngine.transitionTagValue(position: position, topSalaries: salaries)
+            let transitionPrice = ContractEngine.transitionTagValue(
                 position: position,
                 topSalaries: salaries,
                 capMode: career.capMode,
@@ -1030,11 +1424,14 @@ struct FranchiseTagView: View {
 
             quotes[position] = TagQuote(
                 position: position,
-                topFive: topFive,
-                average: average,
-                price: price,
+                topSalaries: topSalaries,
+                franchiseAverage: franchiseAverage,
+                franchisePrice: franchisePrice,
+                transitionAverage: transitionAverage,
+                transitionPrice: transitionPrice,
                 floor: Int(ContractEngine.franchiseTagFloorShare * Double(salaryCap)),
-                isFloored: career.capMode != .sandbox && price > average,
+                isFranchiseFloored: career.capMode != .sandbox && franchisePrice > franchiseAverage,
+                isTransitionFloored: career.capMode != .sandbox && transitionPrice > transitionAverage,
                 isSandbox: career.capMode == .sandbox
             )
         }
@@ -1043,12 +1440,13 @@ struct FranchiseTagView: View {
 
     /// The breakdown request for one man's row, or nil for a position the load
     /// did not price (which is no row on this screen — see `buildTagQuotes`).
-    private func tagBreakdownRequest(for player: Player, booked: Int?) -> TagBreakdownRequest? {
+    private func tagBreakdownRequest(for player: Player, booked: Int?, bookedKind: TagKind?) -> TagBreakdownRequest? {
         guard let quote = tagQuotes[player.position] else { return nil }
         return TagBreakdownRequest(
             quote: quote,
             previous: previousQuotes[player.position],
             bookedCommitment: booked,
+            bookedKind: bookedKind,
             playerName: player.fullName
         )
     }
@@ -1100,7 +1498,7 @@ struct FranchiseTagView: View {
         var quotes = current?.quotes ?? [:]
         for (position, quote) in tagQuotes {
             quotes[position.rawValue] = TagPriceMemory.Quote(
-                price: quote.price,
+                price: quote.franchisePrice,
                 topFive: quote.topFiveSalaries
             )
         }
@@ -1130,7 +1528,7 @@ struct FranchiseTagView: View {
         guard let quote = tagQuotes[position],
               let previous = previousQuotes[position]
         else { return nil }
-        let change = roundedToDisplay(quote.price) - roundedToDisplay(previous.price)
+        let change = roundedToDisplay(quote.franchisePrice) - roundedToDisplay(previous.price)
         return change == 0 ? nil : change
     }
 
@@ -1154,10 +1552,12 @@ struct FranchiseTagView: View {
     /// The chip carries no label of its own: it lives inside a button that
     /// declares one, and VoiceOver reads the button rather than its children —
     /// so news left on the chip would be news nobody hears.
-    private func spokenTagCost(_ tagCost: Int, for player: Player, change: Int?) -> String {
-        var spoken = "Tag cost \(formatMillions(tagCost)) for \(player.fullName)"
+    private func spokenTagCost(_ tagCost: Int, transition: Int, for player: Player, change: Int?) -> String {
+        var spoken = "Franchise tag \(formatMillions(tagCost)), transition tag \(formatMillions(transition)), for \(player.fullName)"
         if let change {
-            spoken += ", \(change > 0 ? "up" : "down") \(formatMillions(abs(change))) since your last visit"
+            // Named, because two figures are now read out and only one of them
+            // is measured: the price memory records the franchise number.
+            spoken += ". Franchise \(change > 0 ? "up" : "down") \(formatMillions(abs(change))) since your last visit"
         }
         return spoken
     }
@@ -1172,32 +1572,70 @@ struct FranchiseTagView: View {
     private func tagConfirmationTerms(for pending: PendingTag) -> String {
         let player = pending.player
         let remaining = roundedToDisplay(projectedNextYearSpace) - roundedToDisplay(pending.tagCost)
-        return """
-        \(player.position.rawValue) \(player.fullName), \(player.overall) OVR, age \(player.age).
+        let identity = "\(player.position.rawValue) \(player.fullName), \(player.overall) OVR, age \(player.age)."
 
-        One season in \(seasonLabel(nextSeason)) at \(formatMillions(pending.tagCost)) — the average of the top 5 salaries at his position. It charges the \(seasonLabel(nextSeason)) cap, leaving \(formatMillions(remaining)) projected.
+        switch pending.kind {
+        case .franchise:
+            return """
+            \(identity)
 
-        This is your only franchise tag this offseason. You can remove it from this screen afterwards.
-        """
+            One season in \(seasonLabel(nextSeason)) at \(formatMillions(pending.tagCost)) — the average of the top \(ContractEngine.franchiseTagPoolSize) salaries at his position. It charges the \(seasonLabel(nextSeason)) cap, leaving \(formatMillions(remaining)) projected.
+
+            No other club may sign him. This is your only tag this offseason — franchise or transition — and you can remove it from this screen afterwards.
+            """
+        case .transition:
+            return """
+            \(identity)
+
+            One season in \(seasonLabel(nextSeason)) at \(formatMillions(pending.tagCost)) — the average of the top \(ContractEngine.transitionTagPoolSize) salaries at his position. It charges the \(seasonLabel(nextSeason)) cap, leaving \(formatMillions(remaining)) projected.
+
+            It does NOT stop other clubs signing him. Any of them may put a contract in front of him, and you then either take on those exact terms — salary and years — or lose him for nothing.
+
+            This is your only tag this offseason, franchise or transition.
+            """
+        }
     }
 
-    private func applyTag(to player: Player, tagCost: Int) {
+    private func applyTag(to player: Player, kind: TagKind, tagCost: Int) {
         guard let team, !hasUsedTag else { return }
 
-        ContractEngine.applyFranchiseTag(
-            player: player,
-            tagValue: tagCost,
-            team: team,
-            capMode: career.capMode,
-            bindingSeason: nextSeason,
-            careerID: career.id
-        )
+        switch kind {
+        case .franchise:
+            ContractEngine.applyFranchiseTag(
+                player: player,
+                tagValue: tagCost,
+                team: team,
+                capMode: career.capMode,
+                bindingSeason: nextSeason,
+                careerID: career.id
+            )
+        case .transition:
+            ContractEngine.applyTransitionTag(
+                player: player,
+                tagValue: tagCost,
+                position: player.position,
+                team: team,
+                capMode: career.capMode,
+                bindingSeason: nextSeason,
+                careerID: career.id
+            )
+        }
 
         // Persist so CareerShellView picks up the change
         try? modelContext.save()
+        // The offseason task "Franchise Tag Decisions" completes on a tag OR on
+        // this flag, and a transition tag sets no `Player` flag for it to see —
+        // so the flag is what tells the shell the decision was made. Set for
+        // both tags, exactly as it already was for one.
         CareerScopedDefaults.set(true, "franchiseTagVisited")
 
-        // Refresh local state
+        // Refresh local state — which is also where the league gets its one look
+        // at a transition-tagged man (`loadData` calls
+        // `FreeAgencyEngine.canvassTransitionTags`). Canvassing HERE, on the tap,
+        // and not on some later screen, is what guarantees the match-or-lose
+        // decision is in front of the user while he is still on the screen that
+        // can answer it: the tag is applied during Review Roster and settled by
+        // the rollover out of it, so this visit is the whole window.
         loadData()
     }
 
@@ -1215,6 +1653,63 @@ struct FranchiseTagView: View {
         try? modelContext.save()
 
         // Refresh local state
+        loadData()
+    }
+
+    private func removeTransitionTag(from player: Player) {
+        ContractEngine.removeTransitionTag(
+            player: player,
+            team: team,
+            capMode: career.capMode,
+            careerID: career.id
+        )
+        try? modelContext.save()
+        loadData()
+    }
+
+    // MARK: - Answering an Offer Sheet
+
+    private var answerConfirmationTitle: String {
+        guard let pending = pendingAnswer else { return "Answer the offer sheet?" }
+        return pending.answer == .matched
+            ? "Match \(pending.row.offer?.teamAbbreviation ?? "the")'s offer?"
+            : "Let \(pending.row.playerName) go?"
+    }
+
+    /// Both answers spelled out before either is given, because
+    /// `TransitionTagLedger.answer` refuses to change one afterwards.
+    private func answerConfirmationTerms(for pending: PendingAnswer) -> String {
+        guard let offer = pending.row.offer else { return "" }
+        let total = offer.annualSalary * max(1, offer.years)
+        let yearWord = offer.years == 1 ? "year" : "years"
+
+        switch pending.answer {
+        case .matched:
+            // A straight subtraction, and it is right because the banner is not
+            // carrying him: `committedNextYear` charges an UNANSWERED sheet
+            // nothing, since an unanswered sheet settles as a decline. Matching
+            // is therefore the whole of the new commitment.
+            let remaining = roundedToDisplay(projectedNextYearSpace) - roundedToDisplay(offer.annualSalary)
+            return """
+            \(pending.row.playerName) stays, on \(offer.teamAbbreviation)'s terms rather than yours: \(formatMillions(offer.annualSalary)) a year for \(offer.years) \(yearWord), \(formatMillions(total)) in all, starting \(seasonLabel(nextSeason)).
+
+            That replaces the \(formatMillions(pending.row.price)) one-year tender, so your \(seasonLabel(nextSeason)) projected space becomes \(formatMillions(remaining)).
+
+            You cannot change this answer.
+            """
+        case .declined:
+            return """
+            \(pending.row.playerName) signs with \(offer.teamAbbreviation) when the \(seasonLabel(nextSeason)) league year opens — \(formatMillions(offer.annualSalary)) a year for \(offer.years) \(yearWord) — and you get nothing back for him. No pick, no compensation.
+
+            Your tag is still spent for this offseason.
+
+            You cannot change this answer.
+            """
+        }
+    }
+
+    private func answerOfferSheet(_ pending: PendingAnswer) {
+        guard TransitionTagLedger.answer(pending.answer, playerID: pending.row.playerID, careerID: career.id) else { return }
         loadData()
     }
 
@@ -1266,12 +1761,31 @@ struct FranchiseTagView: View {
         let allDesc = FetchDescriptor<Player>(predicate: #Predicate { $0.careerID == cid })
         allPlayers = (try? modelContext.fetch(allDesc)) ?? []
 
-        // The 32 clubs, for the breakdown's five rows. One fetch per load, not
-        // one per row: the sheet names the man's employer and `Player` carries
-        // only his `teamID`.
+        // The 32 clubs, for the breakdown's salary rows and for the offer-sheet
+        // round. One fetch per load, not one per row: the sheet names the man's
+        // employer and `Player` carries only his `teamID`.
         let teamsDesc = FetchDescriptor<Team>(predicate: #Predicate { $0.careerID == cid })
-        teamAbbreviations = ((try? modelContext.fetch(teamsDesc)) ?? [])
-            .reduce(into: [UUID: String]()) { $0[$1.id] = $1.abbreviation }
+        // Local, not `@State`: the only things the screen keeps are the
+        // abbreviations, and the offer-sheet round needs the clubs for the
+        // length of this call and no longer.
+        let leagueTeams = (try? modelContext.fetch(teamsDesc)) ?? []
+        teamAbbreviations = leagueTeams.reduce(into: [UUID: String]()) { $0[$1.id] = $1.abbreviation }
+
+        // **The league's one look at every transition-tagged man.**
+        //
+        // Idempotent: `canvassTransitionTags` only touches rows whose
+        // `canvassed` flag is still false, and sets it whether or not anybody
+        // filed. So a screen reloaded five times is still one market, not five
+        // rolls of the dice — which is the difference between a market and a
+        // slot machine the user can feed by leaving and coming back.
+        FreeAgencyEngine.canvassTransitionTags(
+            allPlayers: allPlayers,
+            allTeams: leagueTeams,
+            career: career,
+            userTeamID: fetchedTeamID,
+            salaryCap: team?.salaryCap ?? ContractEngine.openingSalaryCap
+        )
+        transitionTags = TransitionTagLedger.tags(careerID: career.id)
 
         tagQuotes = buildTagQuotes()
         captureTagPriceBaseline()
@@ -1285,7 +1799,8 @@ struct FranchiseTagView: View {
 // could name those five. A price that is derived, unexplained and free to move
 // between two visits reads as the app changing its mind — which is precisely
 // what the screenshot audit recorded ("moved $3.3M between visits with no
-// note"). These four types are the answer: the quote, the men behind it, the
+// note"). These five types are the answer: the two tags, the quote, the men
+// behind it, the
 // request that opens it, and the memory that makes "since your last visit" a
 // real measurement rather than a claim.
 //
@@ -1293,30 +1808,88 @@ struct FranchiseTagView: View {
 // own `View` and a type nested `private` inside `FranchiseTagView` is not
 // visible to it.
 
-/// One position's tag price, and everything needed to explain it.
-private struct TagQuote {
-    let position: Position
-    /// The five salaries the engine averages, highest first. Fewer than five
-    /// when the league has fewer salaried men at the position — the engine
-    /// divides by what it has, and so does the sheet.
-    let topFive: [TagTopSalary]
-    /// The straight average of `topFive`: the number the rules banner
-    /// describes, before the floor.
-    let average: Int
-    /// What the club is actually charged — the average, the floor, or $0 in
-    /// sandbox.
-    let price: Int
-    /// The cap-relative floor as it stands for this club, this year.
-    let floor: Int
-    /// The floor is doing the work: `price` is not the average.
-    let isFloored: Bool
-    let isSandbox: Bool
+/// **The two tags this screen can spend.**
+///
+/// A club has one tag per offseason and it must choose which. The difference is
+/// two numbers and one rule, and both live on this type so no row, alert or
+/// sheet has to spell either of them out twice.
+private enum TagKind {
+    case franchise
+    case transition
 
-    /// The salaries as the memory stores them.
-    var topFiveSalaries: [Int] { topFive.map(\.salary) }
+    var title: String {
+        switch self {
+        case .franchise:  return "Franchise"
+        case .transition: return "Transition"
+        }
+    }
+
+    /// How many salaries this tag's price averages — read off the engine, never
+    /// re-typed, so the screen cannot claim a slice the engine does not take.
+    var poolSize: Int {
+        switch self {
+        case .franchise:  return ContractEngine.franchiseTagPoolSize
+        case .transition: return ContractEngine.transitionTagPoolSize
+        }
+    }
 }
 
-/// One man in a position's top five.
+/// One position's tag prices, and everything needed to explain them.
+private struct TagQuote {
+    let position: Position
+    /// Up to ten salaries, highest first — the transition tag's whole slice, of
+    /// which the leading five are the franchise tag's. Fewer than ten when the
+    /// league has fewer salaried men at the position: the engine divides by what
+    /// it has, and so does the sheet.
+    let topSalaries: [TagTopSalary]
+    /// The straight average of the top five, before the floor.
+    let franchiseAverage: Int
+    /// What a franchise tag actually costs — the average, the floor, or $0 in
+    /// sandbox.
+    let franchisePrice: Int
+    /// The straight average of the top ten, before the floor.
+    let transitionAverage: Int
+    /// What a transition tag actually costs.
+    let transitionPrice: Int
+    /// The cap-relative floor as it stands for this club, this year. One floor,
+    /// shared by both tags — see `ContractEngine.transitionTagValue`.
+    let floor: Int
+    let isFranchiseFloored: Bool
+    let isTransitionFloored: Bool
+    let isSandbox: Bool
+
+    /// The five men the franchise tag averages.
+    var franchiseBand: [TagTopSalary] {
+        Array(topSalaries.prefix(ContractEngine.franchiseTagPoolSize))
+    }
+
+    /// The salaries as the price memory stores them. Deliberately still the top
+    /// FIVE: the memory is a season-stamped record of what the screen quoted on
+    /// its last visit, existing saves hold five, and the delta it drives is the
+    /// one printed beside the franchise price.
+    var topFiveSalaries: [Int] { franchiseBand.map(\.salary) }
+
+    func price(_ kind: TagKind) -> Int {
+        switch kind {
+        case .franchise:  return franchisePrice
+        case .transition: return transitionPrice
+        }
+    }
+
+    func average(_ kind: TagKind) -> Int {
+        switch kind {
+        case .franchise:  return franchiseAverage
+        case .transition: return transitionAverage
+        }
+    }
+
+    /// How many salaries this quote could actually take for `kind`.
+    func bandCount(_ kind: TagKind) -> Int {
+        min(topSalaries.count, kind.poolSize)
+    }
+}
+
+/// One man in a position's top ten.
 private struct TagTopSalary: Identifiable {
     let id: UUID
     let name: String
@@ -1349,6 +1922,10 @@ private struct TagBreakdownRequest: Identifiable {
     /// Non-nil is what tells the sheet to explain that his number is fixed and
     /// the market's is not.
     let bookedCommitment: Int?
+    /// Which tag booked it. The note has to name the right one — a transition
+    /// tender described as a franchise tag would be the reused-name mistake
+    /// this file's own header warns about.
+    let bookedKind: TagKind?
     let playerName: String
 }
 
@@ -1390,12 +1967,17 @@ private func tagMillions(_ thousands: Int) -> String {
 
 /// Where a derived number shows its work.
 ///
-/// Three questions, in the order a GM asks them: **what is this number** (the
-/// headline and the arithmetic that produced it), **what has it done since I
-/// last looked** (the change card, and the LAST VISIT column that says which
-/// rank moved), and **whose salaries are these** (the five rows). The notes at
-/// the foot cover the cases where the headline is not simply the average — the
-/// floor, sandbox, a thin position, and a tag already booked.
+/// Three questions, in the order a GM asks them: **what are these numbers** (the
+/// two headline prices and the arithmetic that produced each), **what have they
+/// done since I last looked** (the change card, and the LAST VISIT column that
+/// says which rank moved), and **whose salaries are these** (the ranked rows).
+/// The notes at the foot cover the cases where a headline is not simply the
+/// average — the floor, sandbox, a thin position, and a tag already booked.
+///
+/// One sheet for both tags, because there is one list: the franchise number is
+/// its first five entries averaged and the transition number is all ten. Two
+/// sheets would have printed the same salaries twice and invited them to
+/// disagree.
 ///
 /// It reads nothing. Every figure arrives on the `TagBreakdownRequest`, priced
 /// in the one pass `buildTagQuotes` already makes, so opening the sheet does
@@ -1440,28 +2022,26 @@ private struct TagBreakdownSheet: View {
     // MARK: - Headline
 
     private var headline: some View {
-        VStack(alignment: .leading, spacing: DSSpacing.xs) {
-            Text(tagMillions(quote.price))
-                .font(.system(size: DSType.Size.title1, weight: .bold).monospacedDigit())
-                .foregroundStyle(Color.accentGold)
-
-            Text(quote.isSandbox
-                 ? "Sandbox cap mode: a tag is booked at $0. The salaries below are what it would cost in a capped save."
-                 : "The average of the top 5 \(quote.position.rawValue) salaries in the league — charged against your \(tagSeasonLabel) cap, not this year's.")
-                .font(.subheadline)
-                .foregroundStyle(Color.textSecondary)
-                .fixedSize(horizontal: false, vertical: true)
-
-            if !quote.topFive.isEmpty {
-                // The sum on one line. It is the shortest possible proof that
-                // the five rows underneath are the whole of the number above
-                // them, and it is the line a reader checks when he does not
-                // believe the price.
-                Text(arithmetic)
-                    .font(.system(size: DSType.Size.footnote).monospacedDigit())
-                    .foregroundStyle(Color.textTertiary)
+        VStack(alignment: .leading, spacing: DSSpacing.sm) {
+            if quote.isSandbox {
+                Text("Sandbox cap mode: either tag is booked at $0. The salaries below are what they would cost in a capped save.")
+                    .font(.subheadline)
+                    .foregroundStyle(Color.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            // Both prices, one above the other, because they are one decision.
+            // The franchise figure leads: it is the dearer of the two by
+            // construction (ranks 6-10 cannot raise an average of ranks 1-5)
+            // and it is the tag that ends the conversation.
+            priceBlock(
+                .franchise,
+                blurb: "The average of the top \(ContractEngine.franchiseTagPoolSize) \(quote.position.rawValue) salaries in the league — charged against your \(tagSeasonLabel) cap, not this year's. Nobody else may sign him."
+            )
+            Divider().overlay(Color.surfaceBorder.opacity(0.6))
+            priceBlock(
+                .transition,
+                blurb: "The same list read \(ContractEngine.transitionTagPoolSize) deep, so it is never the dearer of the two. It buys the right to MATCH a rival club's offer sheet, not the right to refuse one."
+            )
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(DSSpacing.md)
@@ -1473,18 +2053,54 @@ private struct TagBreakdownSheet: View {
         )
     }
 
-    private var arithmetic: String {
-        let terms = quote.topFive.map { tagMillions($0.salary) }.joined(separator: " + ")
-        return "(\(terms)) \u{00F7} \(quote.topFive.count) = \(tagMillions(quote.average))"
+    private func priceBlock(_ kind: TagKind, blurb: String) -> some View {
+        VStack(alignment: .leading, spacing: DSSpacing.xs) {
+            Text(kind.title.uppercased())
+                .font(.system(size: DSType.Size.micro, weight: .bold))
+                .foregroundStyle(Color.textTertiary)
+            Text(tagMillions(quote.price(kind)))
+                .font(.system(size: DSType.Size.title1, weight: .bold).monospacedDigit())
+                .foregroundStyle(kind == .franchise ? Color.accentGold : Color.accentBlue)
+            Text(blurb)
+                .font(.subheadline)
+                .foregroundStyle(Color.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if !quote.topSalaries.isEmpty {
+                // The sum on one line. It is the shortest possible proof that
+                // the rows underneath are the whole of the number above them,
+                // and it is the line a reader checks when he does not believe
+                // the price.
+                Text(arithmetic(kind))
+                    .font(.system(size: DSType.Size.footnote).monospacedDigit())
+                    .foregroundStyle(Color.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// The arithmetic for one tag, over the men it could actually take.
+    ///
+    /// `bandCount` and not the pool size: `ContractEngine.topSalaryAverage`
+    /// divides by what the league supplied, so a position with seven salaried
+    /// men has a real seven-man transition average, and the line has to divide
+    /// by seven or it is describing a different function.
+    private func arithmetic(_ kind: TagKind) -> String {
+        let band = Array(quote.topSalaries.prefix(quote.bandCount(kind)))
+        let terms = band.map { tagMillions($0.salary) }.joined(separator: " + ")
+        return "(\(terms)) \u{00F7} \(band.count) = \(tagMillions(quote.average(kind)))"
     }
 
     // MARK: - Since Last Visit
 
     /// The move, on the price the screen actually printed. Nil when there is no
     /// baseline (a first visit this league year) or nothing moved.
+    /// The FRANCHISE price, and only it: that is the one figure `TagPriceMemory`
+    /// has ever stored, so it is the only one with a last-visit value to be
+    /// measured against. The card says which number it is talking about.
     private var change: Int? {
         guard let previous = request.previous else { return nil }
-        let delta = displayRounded(quote.price) - displayRounded(previous.price)
+        let delta = displayRounded(quote.franchisePrice) - displayRounded(previous.price)
         return delta == 0 ? nil : delta
     }
 
@@ -1494,10 +2110,10 @@ private struct TagBreakdownSheet: View {
                 .font(.subheadline.weight(.bold))
                 .foregroundStyle(change > 0 ? Color.warning : Color.success)
             VStack(alignment: .leading, spacing: 2) {
-                Text("\(change > 0 ? "Up" : "Down") \(tagMillions(abs(change))) since your last visit")
+                Text("Franchise tag \(change > 0 ? "up" : "down") \(tagMillions(abs(change))) since your last visit")
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(Color.textPrimary)
-                Text("It was \(tagMillions(request.previous?.price ?? 0)) when you last opened this screen. The tag follows the league's top five at the position, so any signing anywhere in the league can move it — including one you made yourself.")
+                Text("It was \(tagMillions(request.previous?.price ?? 0)) when you last opened this screen. The tag follows the league's top five at the position, so any signing anywhere in the league can move it — including one you made yourself. The transition number moves the same way; this screen has only ever recorded the franchise one, so that is the only move it can prove.")
                     .font(.caption)
                     .foregroundStyle(Color.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -1534,10 +2150,10 @@ private struct TagBreakdownSheet: View {
 
             Divider().overlay(Color.surfaceBorder)
 
-            if quote.topFive.isEmpty {
+            if quote.topSalaries.isEmpty {
                 CompactEmptyStateView(
                     icon: "tray",
-                    message: "No salaried \(quote.position.rawValue) in the league — the tag falls back to its floor."
+                    message: "No salaried \(quote.position.rawValue) in the league — both tags fall back to the floor."
                 )
                 .padding(.horizontal, 8)
                 .padding(.vertical, 12)
@@ -1558,10 +2174,17 @@ private struct TagBreakdownSheet: View {
 
                     Divider().overlay(Color.surfaceBorder.opacity(0.5))
 
-                    ForEach(Array(quote.topFive.enumerated()), id: \.element.id) { index, entry in
+                    ForEach(Array(quote.topSalaries.enumerated()), id: \.element.id) { index, entry in
                         salaryRow(entry, rank: index + 1, previous: previousSalary(at: index))
                             .padding(.horizontal, 12)
-                        if index < quote.topFive.count - 1 {
+                        // The band boundary, drawn once and only where the list
+                        // is actually long enough to have one: everything above
+                        // this line is in the franchise average, everything in
+                        // the whole list is in the transition average.
+                        if index + 1 == ContractEngine.franchiseTagPoolSize,
+                           quote.topSalaries.count > ContractEngine.franchiseTagPoolSize {
+                            bandDivider
+                        } else if index < quote.topSalaries.count - 1 {
                             Divider()
                                 .overlay(Color.surfaceBorder.opacity(0.5))
                                 .padding(.horizontal, 8)
@@ -1574,10 +2197,28 @@ private struct TagBreakdownSheet: View {
         .cardBackground()
     }
 
-    /// "Top 5" is the rule; the count is what the league could actually supply.
-    /// The empty case still says 5, because there is nothing to have taken 0 of.
+    private var bandDivider: some View {
+        HStack(spacing: 6) {
+            Rectangle()
+                .fill(Color.accentGold.opacity(0.4))
+                .frame(height: 1)
+            Text("\u{2191} FRANCHISE AVERAGES THESE \(quote.bandCount(.franchise)) \u{00B7} TRANSITION AVERAGES ALL \(quote.topSalaries.count)")
+                .font(.system(size: DSType.Size.micro, weight: .bold))
+                .foregroundStyle(Color.textTertiary)
+                .fixedSize(horizontal: false, vertical: true)
+            Rectangle()
+                .fill(Color.accentGold.opacity(0.4))
+                .frame(height: 1)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+    }
+
+    /// "Top 10" is the deeper of the two rules; the count is what the league
+    /// could actually supply. The empty case still says 10, because there is
+    /// nothing to have taken 0 of.
     private var tableTitle: String {
-        let count = quote.topFive.isEmpty ? 5 : quote.topFive.count
+        let count = quote.topSalaries.isEmpty ? ContractEngine.transitionTagPoolSize : quote.topSalaries.count
         return "Top \(count) \(quote.position.rawValue) Salaries"
     }
 
@@ -1629,7 +2270,9 @@ private struct TagBreakdownSheet: View {
 
     /// What sat at this rank last visit. Nil when the position had fewer men at
     /// a salary then than it does now — an em dash rather than a zero, because
-    /// "there was nobody here" is not "he earned nothing".
+    /// "there was nobody here" is not "he earned nothing". Ranks 6-10 are always
+    /// nil: the memory records five, deliberately (see `TagQuote.topFiveSalaries`),
+    /// so the column simply stops rather than inventing a history it never kept.
     private func previousSalary(at index: Int) -> Int? {
         guard let previous = request.previous, index < previous.topFive.count else { return nil }
         return previous.topFive[index]
@@ -1650,28 +2293,45 @@ private struct TagBreakdownSheet: View {
     private var notes: some View {
         VStack(alignment: .leading, spacing: DSSpacing.xs) {
             if let booked = request.bookedCommitment {
+                let kindWord = (request.bookedKind ?? .franchise) == .transition ? "transition tender" : "franchise tag"
                 note(
                     "lock.fill",
-                    "\(request.playerName)'s tag is booked at \(tagMillions(booked)) and does not move with the market. The price above is what tagging a \(quote.position.rawValue) would cost today."
+                    "\(request.playerName)'s \(kindWord) is booked at \(tagMillions(booked)) and does not move with the market. The prices above are what tagging a \(quote.position.rawValue) would cost today."
                 )
             }
-            if quote.isFloored {
+            if quote.isFranchiseFloored && quote.isTransitionFloored {
                 note(
                     "arrow.up.to.line",
-                    "The average is under the league's minimum tag (\(tagMillions(quote.floor))), so the tag is charged at that floor instead."
+                    "Both averages are under the league's minimum tender (\(tagMillions(quote.floor))), so both tags are charged at that floor — which is why they cost the same here."
+                )
+            } else if quote.isFranchiseFloored {
+                note(
+                    "arrow.up.to.line",
+                    "The top-\(quote.bandCount(.franchise)) average is under the league's minimum tender (\(tagMillions(quote.floor))), so the franchise tag is charged at that floor instead."
+                )
+            } else if quote.isTransitionFloored {
+                note(
+                    "arrow.up.to.line",
+                    "The top-\(quote.bandCount(.transition)) average is under the league's minimum tender (\(tagMillions(quote.floor))), so the transition tag is charged at that floor instead."
                 )
             }
-            // No sandbox note: the headline already says the tag is $0 there,
+            // No sandbox note: the headline already says both tags are $0 there,
             // and saying it twice on one sheet is the app arguing with itself.
-            if !quote.topFive.isEmpty && quote.topFive.count < 5 {
+            if !quote.topSalaries.isEmpty && quote.topSalaries.count < ContractEngine.transitionTagPoolSize {
                 note(
                     "exclamationmark.triangle.fill",
-                    "Only \(quote.topFive.count) salaried \(quote.position.rawValue) in the league, so the average is taken over \(quote.topFive.count) rather than 5."
+                    quote.topSalaries.count <= ContractEngine.franchiseTagPoolSize
+                        ? "Only \(quote.topSalaries.count) salaried \(quote.position.rawValue) in the league, so both averages are taken over \(quote.topSalaries.count) — and both tags therefore cost the same."
+                        : "Only \(quote.topSalaries.count) salaried \(quote.position.rawValue) in the league, so the transition average is taken over \(quote.topSalaries.count) rather than \(ContractEngine.transitionTagPoolSize)."
                 )
             }
             note(
+                "envelope",
+                "The transition tag does not keep him. Any other club may file an offer sheet on him, and you then match those exact terms — salary and years — or lose him for nothing."
+            )
+            note(
                 "arrow.triangle.2.circlepath",
-                "This price is re-read every time the screen opens. Re-signings, free-agent deals and trades anywhere in the league move the top five, and the tag with it."
+                "These prices are re-read every time the screen opens. Re-signings, free-agent deals and trades anywhere in the league move the list above, and both tags with it."
             )
         }
         .frame(maxWidth: .infinity, alignment: .leading)

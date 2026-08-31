@@ -147,6 +147,24 @@ enum FreeAgencyEngine {
         )
     }
 
+    /// **How many clubs will look at a man of this standard**, drawn once.
+    ///
+    /// Lifted out of `generateFreeAgentMarket`'s body unchanged — same bands,
+    /// same draws — because the transition tag's offer-sheet round asks exactly
+    /// the same question about a man who is NOT on the market
+    /// (``openTransitionOfferSheet``). Two copies of this ladder would be two
+    /// answers to "how wanted is an 84-OVR corner", which is the one thing both
+    /// callers need to agree about.
+    static func marketInterest(overall: Int) -> Int {
+        switch overall {
+        case 90...99: return Int.random(in: 7...10)
+        case 80...89: return Int.random(in: 5...8)
+        case 70...79: return Int.random(in: 3...6)
+        case 60...69: return Int.random(in: 1...4)
+        default:      return 1
+        }
+    }
+
     /// Build the free-agent market from all players whose contracts have expired.
     /// Asking prices are influenced by market value and the player's personality motivation.
     /// §5.1: a practice-squad player is `teamID == nil` but under contract, so
@@ -178,16 +196,7 @@ enum FreeAgencyEngine {
                 }()
 
                 // Market interest driven by overall rating
-                let interest: Int = {
-                    let ovr = player.overall
-                    switch ovr {
-                    case 90...99: return Int.random(in: 7...10)
-                    case 80...89: return Int.random(in: 5...8)
-                    case 70...79: return Int.random(in: 3...6)
-                    case 60...69: return Int.random(in: 1...4)
-                    default:      return 1
-                    }
-                }()
+                let interest = marketInterest(overall: player.overall)
 
                 return FreeAgent(
                     player: player,
@@ -570,6 +579,30 @@ enum FreeAgencyEngine {
             contractsByPlayer: contractsByPlayer
         )
 
+        // The transition tag's half of the same moment.
+        //
+        // The ids are read BEFORE the settlement, because settling CONSUMES the
+        // rows and the expiry loop below still needs to know who was tagged. It
+        // is the transition tag's stand-in for `Player.isFranchiseTagged`, which
+        // the loop tests a few dozen lines down and which this tag deliberately
+        // does not set — see `TransitionTagLedger` for why it cannot.
+        //
+        // Both outcomes need the skip. A man who was RETAINED has just been
+        // written a one-year tender and would otherwise be decremented straight
+        // back to zero and dumped on the market the same afternoon he was kept;
+        // a man who LEFT has just signed a multi-year deal with the club that
+        // took him, whose first year has not been played yet.
+        let transitionTaggedIDs = TransitionTagLedger.taggedPlayerIDs(
+            careerID: career?.id,
+            bindingSeason: (career?.currentSeason ?? 0) + 1
+        )
+        settleTransitionTags(
+            allPlayers: allPlayers,
+            allTeams: allTeams,
+            career: career,
+            modelContext: modelContext
+        )
+
         // Task #90 — the fifth-year option deadline, and the first money
         // decision of the league year.
         //
@@ -605,7 +638,9 @@ enum FreeAgencyEngine {
         )
 
         for player in allPlayers {
-            guard player.contractYearsRemaining > 0, !player.isFranchiseTagged else { continue }
+            guard player.contractYearsRemaining > 0,
+                  !player.isFranchiseTagged,
+                  !transitionTaggedIDs.contains(player.id) else { continue }
 
             player.contractYearsRemaining -= 1
 
@@ -2163,6 +2198,286 @@ enum FreeAgencyEngine {
         contract.guaranteedMoney = guaranteed
         contract.noTradeClause = noTrade
         contract.franchiseTagged = false
+    }
+
+    // MARK: - Transition Tag: the offer sheet, and the decision it forces
+
+    /// **The one thing that makes a transition tag a transition tag: a rival
+    /// club can sign the man you tagged.**
+    ///
+    /// The franchise tag ends the conversation — nobody else may talk to him.
+    /// The transition tag only gives the tagging club the right to MATCH, so
+    /// this is the round where somebody tries. It runs once per tag
+    /// (`Tag.canvassed`), because a market that could be re-rolled by reopening
+    /// a screen is a slot machine rather than a market.
+    ///
+    /// ## The band, and why nobody bids outside it
+    ///
+    /// * **Floor — the tender itself.** A sheet at or under the tag is a sheet
+    ///   the tagging club matches for nothing, so no club files one. This is the
+    ///   whole of the tag's protection and it is not a probability: it is the
+    ///   arithmetic.
+    /// * **Ceiling — the man's own opening ask**, from
+    ///   ``projectedAskingPrice(player:salaryCap:)`` — the SAME demand model the
+    ///   AI market bids against, the tampering mill leaks and the user hears on
+    ///   the phone. A club will not pay a tagged man more than he would have
+    ///   asked as a free agent.
+    ///
+    /// **So the tag is safe exactly when the tender already beats his market.**
+    /// Transition-tag a good starter at a position whose top ten are paid more
+    /// than he is worth and nobody comes; transition-tag a star, whose personal
+    /// ask towers over his position's tenth-best salary, and somebody will. That
+    /// is the decision the tag is for, and it falls out of two existing numbers
+    /// rather than a new constant.
+    ///
+    /// Where in the band a club lands is ``settlementLean`` — its GM's own
+    /// bias, the same draw `simulateAIFreeAgency` settles every contract in the
+    /// league with. How MANY clubs get to look is ``marketInterest(overall:)``,
+    /// the same OVR ladder the free-agent market uses. The term is
+    /// ``contractYearsCeiling(age:)``, the same ceiling a club writes for a man
+    /// that age anywhere else — which is what gives a young star's sheet its
+    /// teeth: matching it means five years, not one.
+    ///
+    /// Affordability is measured in the year the sheet CHARGES — projected cap
+    /// less the salaries already running into it, less the GM's own reserve —
+    /// because a promise for next league year tested against this league year's
+    /// bank balance is the year confusion the forward ledger exists to end.
+    /// Sandbox skips the test, exactly as the rest of the market does.
+    ///
+    /// Returns nil when nobody files, which is a real and common outcome.
+    static func openTransitionOfferSheet(
+        player: Player,
+        tag: TransitionTagLedger.Tag,
+        allPlayers: [Player],
+        allTeams: [Team],
+        userTeamID: UUID?,
+        salaryCap: Int,
+        capMode: CapMode,
+        season: Int
+    ) -> TransitionTagLedger.OfferSheet? {
+        let floor = tag.price
+        let ask = projectedAskingPrice(player: player, salaryCap: salaryCap)
+        guard ask > floor else { return nil }
+
+        // What each club has already promised the league year the sheet charges.
+        // `> 1` is "still under contract after this rollover" — the same test
+        // `FranchiseTagView`'s banner, `ContractTimelineView` and
+        // `CapOverviewView` project a future year's committed cap with.
+        var committedNextYearByTeam: [UUID: Int] = [:]
+        for rostered in allPlayers {
+            guard let teamID = rostered.teamID,
+                  rostered.contractYearsRemaining > 1,
+                  !rostered.isRetired else { continue }
+            committedNextYearByTeam[teamID, default: 0] += rostered.annualSalary
+        }
+
+        func room(_ team: Team) -> Int {
+            let cap = ContractEngine.projectedCap(team.salaryCap, seasonsAhead: 1)
+            let reserve = Int(Double(cap) * capReserve(forTeam: team.id))
+            return cap - (committedNextYearByTeam[team.id] ?? 0) - reserve
+        }
+
+        // Only a club with a genuine hole files. `.moderate` is depth, and no
+        // front office spends an offer sheet — which it may well have matched
+        // out from under it for nothing — on depth. Same need model
+        // `simulateAIFreeAgency` orders its shortlist by.
+        let suitors = allTeams.filter { team in
+            guard team.id != userTeamID else { return false }
+            switch assessPositionNeed(team: team, position: player.position, allPlayers: allPlayers) {
+            case .critical, .high:  return true
+            case .moderate, .none:  return false
+            }
+        }
+        guard !suitors.isEmpty else { return nil }
+
+        let looks = max(1, min(marketInterest(overall: player.overall), suitors.count))
+        let shortlist = suitors.sorted { room($0) > room($1) }.prefix(looks)
+
+        var best: (team: Team, salary: Int)?
+        for team in shortlist {
+            let lean = settlementLean(TradeValueEngine.GMPersona.forTeam(id: team.id).archetype)
+            let draw = pow(Double.random(in: 0...1), 1.0 / lean)
+            let bid = floor + Int((Double(ask - floor) * draw).rounded())
+            guard bid > floor else { continue }
+            if capMode != .sandbox, room(team) < bid { continue }
+            if bid > (best?.salary ?? 0) { best = (team, bid) }
+        }
+        guard let best else { return nil }
+
+        return TransitionTagLedger.OfferSheet(
+            teamID: best.team.id,
+            teamAbbreviation: best.team.abbreviation,
+            annualSalary: best.salary,
+            years: max(1, contractYearsCeiling(age: player.age)),
+            filedSeason: season
+        )
+    }
+
+    /// Puts the market in front of every transition tag that has not had its one
+    /// look yet, and records what it did.
+    ///
+    /// Called from the tag screen, which is where the decision has to be
+    /// answered, so the user learns a club has struck on the screen he struck
+    /// from. A tag applied and then abandoned is canvassed on the next visit
+    /// instead — the row remembers, so nothing is canvassed twice.
+    ///
+    /// Returns how many sheets were filed by this call.
+    @discardableResult
+    static func canvassTransitionTags(
+        allPlayers: [Player],
+        allTeams: [Team],
+        career: Career,
+        userTeamID: UUID?,
+        salaryCap: Int
+    ) -> Int {
+        let bindingSeason = career.currentSeason + 1
+        var filed = 0
+        for var row in TransitionTagLedger.tags(careerID: career.id)
+        where !row.canvassed && row.bindingSeason == bindingSeason {
+            guard let player = allPlayers.first(where: { $0.id == row.playerID }),
+                  !player.isRetired
+            else {
+                // The man is gone. Mark the row looked-at rather than leaving it
+                // to be re-tried on every load; the rollover drops it.
+                row.canvassed = true
+                TransitionTagLedger.upsert(row, careerID: career.id)
+                continue
+            }
+            row.offer = openTransitionOfferSheet(
+                player: player,
+                tag: row,
+                allPlayers: allPlayers,
+                allTeams: allTeams,
+                userTeamID: userTeamID,
+                salaryCap: salaryCap,
+                capMode: career.capMode,
+                season: career.currentSeason
+            )
+            row.canvassed = true
+            TransitionTagLedger.upsert(row, careerID: career.id)
+            if row.offer != nil { filed += 1 }
+        }
+        return filed
+    }
+
+    /// **Where a transition tag becomes real money — or a departure.**
+    ///
+    /// The sibling of ``settleFranchiseTags`` and placed beside it in
+    /// ``executeNewLeagueYear`` for the same three ordering reasons: after the
+    /// proration restore and the restructure tick (both write `annualSalary`,
+    /// which this overwrites), before `resignAIOwnCore` (a tag is a commitment
+    /// the club cannot also promise elsewhere), and before the expiry loop and
+    /// the cap true-up (so the number settled here is what the true-up sums).
+    ///
+    /// Three outcomes, and only three:
+    ///
+    /// * **No sheet.** He plays the tender: one year at the top-10 price the user
+    ///   was quoted, which is the number stored on the row rather than a
+    ///   re-derived one, for the reason `settleFranchiseTags` sets out at length.
+    /// * **A matched sheet.** He stays on the rival club's terms — the club that
+    ///   matches takes on exactly what was offered, salary and years both. This
+    ///   is the expensive way to keep him and it is supposed to be.
+    /// * **An unmatched sheet, or one never answered.** He signs with the club
+    ///   that filed it, and the tagging club gets **nothing**. No compensation is
+    ///   booked and no departure is recorded for the compensatory-pick formula:
+    ///   `CompensatoryPickEngine.recordDeparture` is fired by the expiry loop for
+    ///   contracts that RAN OUT, and a tendered man whose club declined to match
+    ///   never reached the open market. Getting nothing back is the whole
+    ///   difference between this tag and the franchise tag.
+    ///
+    /// An orphan — retired, released, or on nobody's roster — is dropped rather
+    /// than settled, exactly as `consumeForward` drops one.
+    ///
+    /// Returns how many tags were settled.
+    @discardableResult
+    static func settleTransitionTags(
+        allPlayers: [Player],
+        allTeams: [Team],
+        career: Career?,
+        modelContext: ModelContext
+    ) -> Int {
+        guard let career else { return 0 }
+
+        let bindingSeason = career.currentSeason + 1
+        let due = TransitionTagLedger.consume(careerID: career.id, bindingSeason: bindingSeason)
+        guard !due.isEmpty else { return 0 }
+
+        var settled = 0
+        for row in due {
+            guard let player = allPlayers.first(where: { $0.id == row.playerID }),
+                  player.teamID != nil,
+                  !player.isRetired
+            else { continue }
+
+            // The old deal is over either way, so its restructure receipt is too
+            // — the same treatment the expiry loop and the franchise-tag
+            // settlement both give a contract that has run its course.
+            player.restructureReliefK = 0
+            player.restructureProrationK = 0
+            player.restructureCarryYears = 0
+            // Not a franchise tag year. `Player.franchiseTagSeason` is read by
+            // `DealTargetYear.plan` to recognise the tag-and-extend shape, and a
+            // transition tag is not that shape — stamping it would make the
+            // planner describe this man's deal as something it is not.
+            player.franchiseTagSeason = 0
+
+            // **A man kept is written the way a tag is written**: the salary and
+            // the clock, and nothing else — the same two fields
+            // `settleFranchiseTags` writes for a tag year, in the same place in
+            // the rollover, so the true-up sums the same thing for both tags.
+            //
+            // KNOWN GAP, and it is the franchise tag's gap too: in realistic
+            // mode this does not rewrite the man's `Contract` row, so a MATCHED
+            // offer sheet — which unlike a tender really is a multi-year deal —
+            // leaves `Contract.capHit` describing the contract it replaced. The
+            // one-line fix is not available here: the only signing door that
+            // writes a `Contract` (`signFreeAgent`) INSERTS a new row rather
+            // than updating the existing one, so routing a retained man through
+            // it would leave him carrying two, and `executeNewLeagueYear`'s
+            // `contractsByPlayer` resolves duplicates with `{ first, _ in first }`
+            // — i.e. arbitrarily. Closing it properly means a settlement that
+            // rewrites a `Contract` in place, which is what
+            // `settleDeferredContract` does for a deferred extension; that is a
+            // change to how the door works, not to this branch.
+            if row.isRetained {
+                player.annualSalary = row.retainedSalary
+                player.contractYearsRemaining = row.retainedYears
+                settled += 1
+                continue
+            }
+
+            guard let offer = row.offer,
+                  let signingTeam = allTeams.first(where: { $0.id == offer.teamID })
+            else {
+                // The club that filed the sheet no longer exists in this save.
+                // The tender stands rather than the man evaporating.
+                player.annualSalary = row.price
+                player.contractYearsRemaining = 1
+                settled += 1
+                continue
+            }
+
+            // He leaves. Cleared off the old roster first so the one signing
+            // door writes him onto the new one exactly as it writes any other
+            // arrival — including the `Contract` row realistic mode needs. Both
+            // clubs' `currentCapUsage` is rebuilt from rostered salaries by the
+            // true-up further down this rollover, so nothing here has to hand-
+            // adjust either ledger.
+            player.teamID = nil
+            player.annualSalary = 0
+            signFreeAgent(
+                player: player,
+                team: signingTeam,
+                years: max(1, offer.years),
+                salary: offer.annualSalary,
+                capMode: career.capMode,
+                modelContext: modelContext
+            )
+            ChurnDiag.record(ChurnDiag.faSign, player)
+            settled += 1
+        }
+
+        return settled
     }
 
     /// The fifth-year price for one man, in thousands.
