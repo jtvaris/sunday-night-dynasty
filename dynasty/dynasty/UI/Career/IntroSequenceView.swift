@@ -100,6 +100,9 @@ struct IntroSequenceView: View {
                     .tag(2)
 
                     YourRoadmapStep(
+                        // #133 — the staff line is a denominator, and a GM+HC
+                        // career has one seat fewer to fill than a GM does.
+                        careerRole: career.role,
                         onContinue: { advanceStep() }
                     )
                     .tag(3)
@@ -1444,6 +1447,12 @@ private struct TeamOverviewStep: View {
 
 private struct YourRoadmapStep: View {
 
+    /// Which chairs this career is responsible for filling.
+    ///
+    /// The staff line below is a DENOMINATOR, and #133 settled that a GM+HC
+    /// career has 15 coaching seats and not 16 — so the list cannot be a
+    /// `static let` any more, because a `static let` has no career to ask.
+    let careerRole: CareerRole
     let onContinue: () -> Void
 
     @State private var showHeader = false
@@ -1455,27 +1464,45 @@ private struct YourRoadmapStep: View {
         let description: String
         let duration: String
         let isMandatory: Bool
-        /// #2987 — what the LEAGUE does in this phase, in the league's own
-        /// numbers, or `nil` where nothing in the engine can answer.
+        /// #2987 — what happens in this phase, in the numbers the ENGINE
+        /// produces, or `nil` where nothing in the engine can answer.
         ///
-        /// **Not a target, and never authored.** Every figure below is read
-        /// out of the engine that produces it — interpolated from the constant
-        /// itself wherever one is exported, so the copy cannot drift when
-        /// balance moves. Two phases carry no line at all (Roster Evaluation,
-        /// OTAs) because there is genuinely no number behind them: nothing in
-        /// the repo counts how many players a club re-grades or how many
-        /// mentoring pairs it makes, and a plausible-looking figure on the
-        /// onboarding screen would be a benchmark the game never holds itself
-        /// to. That is the whole reason "how many free agents does a typical
-        /// club sign" is answered below with the club's BUDGET rather than a
-        /// count: the count is emergent, it is not a constant anywhere, and
-        /// the roster is what decides it.
+        /// **Not a target, and never authored.** Every figure below is traced
+        /// to the function that computes it at runtime — which is not always
+        /// the exported constant that names it, and where the two disagree the
+        /// function wins. Three lines here used to quote a constant no engine
+        /// path reads (`FreeAgencyEngine.capReservePercent`), a constant that
+        /// documents itself as the wrong way to count (`DraftIntel.picksPerRound`
+        /// is the number of CLUBS, and its own note says comp picks make every
+        /// round from the third longer), or a rate the mechanism turns into a
+        /// stride before using (`PreseasonEngine.starterSnapShare`).
+        ///
+        /// **Whose number it is, is part of the number.** A rail that binds only
+        /// AI clubs is said to be about rival clubs, not about "a club" — on an
+        /// onboarding screen "a club" reads as "my club", and the user's roster
+        /// in March is bound by `TradeValueEngine.offseasonRosterCeiling`, not
+        /// by `FreeAgencyEngine.faRosterCeiling`.
+        ///
+        /// Two phases carry no line at all (Roster Evaluation, OTAs) because
+        /// there is genuinely no number behind them: nothing in the repo counts
+        /// how many players a club re-grades or how many mentoring pairs it
+        /// makes, and a plausible-looking figure on the onboarding screen would
+        /// be a benchmark the game never holds itself to. "How many free agents
+        /// does a typical club sign" is still answered with the club's BUDGET
+        /// rather than a count: the count is emergent and measuring it needs the
+        /// multi-season smoke harness, which has not been run against it.
         var leagueNote: String? = nil
     }
 
-    private static let offseasonCalendarEntries: [CalendarEntry] = [
+    /// #133 — the staff line reads `StaffSlots`, the ONE definition of "the
+    /// staff", not raw `CoachRole.allCases`: a GM+HC career sits in the
+    /// head-coach chair himself, so it is not a seat he can fill and must not
+    /// appear in a denominator. Raw `allCases` here told him "16 coaching
+    /// seats" on this card while the staff card of the same intro said "x / 15"
+    /// — bug #133(a), on the screen that fixed it.
+    private static func offseasonCalendarEntries(for careerRole: CareerRole) -> [CalendarEntry] { [
         CalendarEntry(name: "Coaching Changes", description: "Hire and fire coaches, set coordinator schemes, build your staff", duration: "Feb", isMandatory: true,
-                      leagueNote: "A full organisation is \(CoachRole.allCases.count) coaching seats and \(ScoutRole.allCases.count) scouting ones — the shape of the org chart, not a quota."),
+                      leagueNote: "You have \(StaffSlots.coachRoles(for: careerRole).count) coaching seats to fill and \(StaffSlots.scoutRoles.count) scouting ones — the shape of the org chart, not a quota."),
         CalendarEntry(name: "Roster Evaluation", description: "Review every player, identify positional needs, plan your offseason strategy", duration: "Feb", isMandatory: true),
         // 330 of ~350: `ScoutingEngine.generateCombineResults` invites
         // `min(330, …)` of the class `generateDraftClass(count: 350)` builds.
@@ -1483,24 +1510,72 @@ private struct YourRoadmapStep: View {
         // this list that cannot be interpolated — change them together with it.
         CalendarEntry(name: "The Combine", description: "Scout draft prospects, evaluate measurables, update your draft board", duration: "Late Feb", isMandatory: false,
                       leagueNote: "330 of the ~350 prospects get an invite, so the invite is not the filter — your scouts are."),
+        // TWO RAILS, TWO OWNERS. `faRosterCeiling` is checked only inside the AI
+        // market loops (FreeAgencyEngine :2613, :3077) — it is where a RIVAL
+        // stops shopping, and it does not bind the user at all; his roster runs
+        // to `offseasonRosterCeiling` until cutdown day, which is the ceiling
+        // `RosterSummaryBar` prints for him all March.
+        //
+        // The reserve is a BAND, not the 15 % rail: no club reads
+        // `capReservePercent`, every reserve goes through
+        // `capReserve(forTeam:)` — 0.18 analytics / 0.15 balanced / 0.14 old
+        // school / 0.08 aggressive. Keyed on a team id, so it cannot be
+        // interpolated; change 8-18 with that switch.
         CalendarEntry(name: "Free Agency", description: "Sign free agents, re-sign your own players, fill roster gaps", duration: "Mar", isMandatory: true,
-                      leagueNote: "A club carries at most \(FreeAgencyEngine.faRosterCeiling) men out of the market and keeps ~\(Int(FreeAgencyEngine.capReservePercent * 100)) % of the cap back for the draft class and the season. How many signings that is depends on how many lockers are already full."),
+                      leagueNote: "Rival clubs stop shopping at \(FreeAgencyEngine.faRosterCeiling) men and hold 8-18 % of the cap back for the draft class and the season — the boldest keep the least. Your own roster may carry \(TradeValueEngine.offseasonRosterCeiling) until cutdown day."),
+        // NOT "seven rounds of 32 picks". `DraftIntel.picksPerRound` is the
+        // number of clubs in the draft order, and the constant's own note three
+        // lines below it says compensatory awards land at the END of rounds 3-7
+        // and `CompensatoryPickEngine.applyAwards` renumbers the pool 1…N, so a
+        // league year finishes between #224 and #256 and every round from the
+        // third on ends later than flat arithmetic says. 224 is therefore a
+        // FLOOR — the one thing 7 × the draft order can honestly claim — and
+        // grading against it as a total was itself a shipped bug.
         CalendarEntry(name: "The Draft & UDFAs", description: "Select new talent across 7 rounds, then sign undrafted free agents", duration: "Late Apr", isMandatory: true,
-                      leagueNote: "Seven rounds of \(DraftIntel.picksPerRound) picks, then \(UDFAMarketEngine.roundCount) rounds of undrafted signings."),
+                      leagueNote: "Seven rounds, one pick a club, plus compensatory picks at the end of rounds three to seven — so the class runs past \(7 * DraftIntel.picksPerRound) names. Then \(UDFAMarketEngine.roundCount) rounds of undrafted signings."),
         CalendarEntry(name: "OTAs", description: "Set depth chart, assign mentoring pairs, install playbook basics", duration: "May-Jun", isMandatory: false),
         CalendarEntry(name: "Training Camp", description: "Player development, position battles, final roster decisions", duration: "Jul-Aug", isMandatory: true,
                       leagueNote: "Between the draft and cutdown day clubs carry 80-\(TradeValueEngine.offseasonRosterCeiling) players."),
+        // The share is NOT `starterSnapShare`. `PreseasonEngine.openingFirstTeam`
+        // turns that constant into a STRIDE — `round(1 / starterSnapShare)` = 3
+        // — and dresses every third starter, so the figure the mechanism
+        // produces is 1/stride (a third), not 0.35. Retune the constant to 0.40
+        // and the stride rounds to 2, i.e. half the first team opens: quoting
+        // the raw share would have read 40 %. `openingStarterSharePercent`
+        // computes it the way the engine does, so the copy moves with it.
+        //
+        // And it is the USER's plan, not a league rule: the stride only applies
+        // under `.starterSeries`, the selection `PreseasonView` opens on, and
+        // nothing gives an AI club a preseason policy at all.
         CalendarEntry(name: "Preseason", description: "Evaluate young players and bubble roster candidates in live games", duration: "Aug", isMandatory: false,
-                      leagueNote: "\(PreseasonEngine.gamesPerPreseason) exhibition games, with only ~\(Int(PreseasonEngine.starterSnapShare * 100)) % of the projected first team opening any one of them — the rest of the lineup is men fighting for the 53."),
-        // The three waves are `CutDay`'s own cases (cut90To75 / cut75To65 /
-        // cut65To53) — names, not numbers, so they are spelled out here.
+                      leagueNote: "\(PreseasonEngine.gamesPerPreseason) exhibition games. On the plan the preseason screen opens on, only ~\(openingStarterSharePercent) % of your projected first team opens any one of them — the rest of the lineup is men fighting for the 53."),
+        // THE LADDER IS THE USER'S, AND ONLY ITS LAST RUNG IS DUE HERE.
+        // `CutDay.duePhase` is "the ladder's one calendar authority": .cut90To75
+        // falls in `.trainingCamp` and .cut75To65 in `.preseason`, so writing all
+        // three onto this row is the same bug that authority was added to fix.
+        // The LEAGUE does not climb it either — `WeekAdvancer.trimAIRosters`
+        // cuts every AI club to 53 in a single pass at this phase's entry.
         CalendarEntry(name: "Roster Cuts", description: "Cut to 53-man roster — tough decisions on borderline players", duration: "Late Aug", isMandatory: true,
-                      leagueNote: "The league gets there in three waves: 90 to 75, 75 to 65, 65 to 53."),
+                      leagueNote: "Your last cut is to \(CutDay.cut65To53.target). The two rungs before it fall earlier — \(CutDay.cut90To75.target) when camp breaks, \(CutDay.cut75To65.target) when the preseason ends. AI clubs make the whole cut in one pass today."),
         // 7 seeds a conference — `StandingsCalculator.playoffTeams` takes
         // `prefix(7)` of each conference (4 division winners + 3 wild cards).
         CalendarEntry(name: "Regular Season", description: "18 weeks of football — manage injuries, trades, and weekly gameplans", duration: "Sep-Jan", isMandatory: true,
                       leagueNote: "14 of the 32 clubs reach the playoffs — four division winners and three wild cards a conference."),
-    ]
+    ] }
+
+    /// Share of the projected first team that opens any one exhibition, as a
+    /// percentage — derived the way `PreseasonEngine.openingFirstTeam` derives
+    /// it, and not from `starterSnapShare` directly.
+    ///
+    /// That function's `period` is `round(1 / starterSnapShare)` and it takes
+    /// every `period`-th man, so what a game actually dresses is `1 / period`
+    /// of the ones: 33 % at the shipped 0.35, not 35. The duplication of one
+    /// line of arithmetic is the price of the copy tracking the MECHANISM
+    /// rather than the constant the mechanism rounds away.
+    private static var openingStarterSharePercent: Int {
+        let period = max(1, Int((1.0 / max(PreseasonEngine.starterSnapShare, 0.01)).rounded()))
+        return Int((100.0 / Double(period)).rounded())
+    }
 
     private var calendarCard: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -1520,20 +1595,27 @@ private struct YourRoadmapStep: View {
                 .foregroundStyle(Color.textTertiary)
                 .fixedSize(horizontal: false, vertical: true)
 
+            let entries = Self.offseasonCalendarEntries(for: careerRole)
             VStack(alignment: .leading, spacing: 0) {
-                ForEach(Array(Self.offseasonCalendarEntries.enumerated()), id: \.offset) { index, entry in
+                ForEach(Array(entries.enumerated()), id: \.offset) { index, entry in
                     let isCurrent = index == 0
-                    let totalEntries = Self.offseasonCalendarEntries.count
+                    let totalEntries = entries.count
                     // The last row is not a tenth bullet, it is what the other
                     // nine are for. It used to go through the identical
                     // template and then get faded harder than any row above it,
                     // so the destination was the dimmest thing on the page.
                     let isDestination = index == totalEntries - 1
-                    // #137: Fade distant phases progressively. The floor is
-                    // 0.7, not 0.4 — the rows now carry a line of prose each,
-                    // and a description has to stay readable at the far end of
-                    // the timeline in a way a two-word phase name did not.
-                    let distanceFade: Double = (isCurrent || isDestination) ? 1.0 : max(0.7, 1.0 - Double(index) * 0.08)
+                    // #137: Fade distant phases progressively. The floor was
+                    // 0.7 — raised again here, because the rows now carry TWO
+                    // lines of prose and the second is a tier lighter than the
+                    // first. Measured on `backgroundSecondary`: `textTertiary`
+                    // reads 5.56 : 1 at full strength but 3.42 : 1 at 0.7, and
+                    // `textSecondary` 3.89 : 1 — both under the WCAG AA 4.5 : 1
+                    // floor at 11 pt, i.e. the fade was spending contrast the
+                    // palette had already been corrected to buy. At 0.9 they are
+                    // 4.77 : 1 and 5.53 : 1. The fade is atmosphere; the prose
+                    // is the content, and it wins.
+                    let distanceFade: Double = (isCurrent || isDestination) ? 1.0 : max(0.9, 1.0 - Double(index) * 0.08)
 
                     HStack(alignment: .top, spacing: 10) {
                         // Timeline connector
@@ -1665,8 +1747,10 @@ private struct YourRoadmapStep: View {
             // on an onboarding screen reads as an assignment unless something
             // says otherwise. It is also literally true: every one of them is
             // read out of the engine that produces it, and the phases where the
-            // engine publishes nothing carry no figure at all.
-            Text("The figures are the league's own — what clubs do here, read from the game's rules. None of them is a score you are held to.")
+            // engine publishes nothing carry no figure at all. It no longer
+            // calls them all "the league's": several of the lines above are
+            // rails that bind rival clubs only, and each now says whose it is.
+            Text("The figures are read from the game's own rules — what happens here, not a score you are held to. Where a rule binds only the other 31 clubs, the line says so.")
                 .font(DSType.text(DSType.Size.caption, .regular, prose: true))
                 .foregroundStyle(Color.textTertiary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -1817,12 +1901,18 @@ private struct ReadyToBeginStep: View {
     @State private var showButton = false
     @State private var glowAmount: CGFloat = 0.3
 
-    /// #3008 — whether this save has still to see its rookie-GM tip.
+    /// #3008 — whether THIS CAREER has still to see its rookie-GM tip.
     ///
-    /// Read once, at construction, rather than per redraw: the banner has to
-    /// survive its own dismissal animation, and `FirstRunTip.markDone()` writes
-    /// the flag the instant "Got it" is tapped.
-    @State private var showRookieTip = !FirstRunTip.rookieGM.isDone
+    /// Per career, not per install: the pool exists so a second career opens on
+    /// a line the first never showed, and the global bool this used to read made
+    /// career #2 show nothing at all — the seeded draw was dead code the moment
+    /// the banner was dismissed once.
+    ///
+    /// `nil` until the first appear, because the answer needs `career` and a
+    /// property initializer has no access to one. Resolved exactly once and then
+    /// never re-read: the banner has to survive its own dismissal animation, and
+    /// `markRookieGMSeen` writes the flag the instant "Got it" is tapped.
+    @State private var showRookieTip: Bool?
 
     /// The pulse, the fall and the staged reveals are all decoration. Under
     /// Reduce Motion the screen still assembles itself, it just does not move:
@@ -2031,12 +2121,12 @@ private struct ReadyToBeginStep: View {
                             // `TipBanner` the 4th-down and audible hints use, it
                             // is dismissed the same way, and Settings → "Reset
                             // Tips" brings it back with the rest of them.
-                            if showRookieTip {
+                            if showRookieTip == true {
                                 TipBanner(
                                     icon: "lightbulb.fill",
                                     text: RookieGMTip.line(forCareer: career.id)
                                 ) {
-                                    FirstRunTip.rookieGM.markDone()
+                                    FirstRunTip.markRookieGMSeen(career: career.id)
                                     withAnimation(.easeInOut(duration: 0.2)) { showRookieTip = false }
                                 }
                                 .frame(maxWidth: 460)
@@ -2106,7 +2196,16 @@ private struct ReadyToBeginStep: View {
                 .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
         }
-        .onAppear { runAnimations() }
+        .onAppear {
+            // #3008 — resolve the rookie-GM tip once, on first appear. `??=`
+            // in effect: a second appear (the paged `TabView` builds and
+            // rebuilds its neighbours) must not resurrect a banner the player
+            // has already dismissed on this page.
+            if showRookieTip == nil {
+                showRookieTip = !FirstRunTip.rookieGMSeen(career: career.id)
+            }
+            runAnimations()
+        }
     }
 
     // MARK: - Hand-over card

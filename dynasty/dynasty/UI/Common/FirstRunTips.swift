@@ -18,6 +18,15 @@ enum FirstRunTip: String, CaseIterable {
     case audible = "tip.audible.done"
     /// One rookie-GM mistake, on the closing screen of the intro sequence.
     /// The line itself comes from ``RookieGMTip``.
+    ///
+    /// **Scoped to a CAREER, not to the install** — the one tip here that is.
+    /// ``RookieGMTip/pool`` exists so a second career opens on a line the first
+    /// never showed, and a single global bool made every career after the first
+    /// show nothing at all: the per-career draw was dead code the moment the
+    /// banner was dismissed once. Read it through ``FirstRunTip/rookieGMSeen(career:)``
+    /// and write it through ``FirstRunTip/markRookieGMSeen(career:)``; this case
+    /// stays in `allCases` so "Reset Tips" still names it, and its own bool flag
+    /// is simply not the flag the banner consults.
     case rookieGM = "tip.rookieGM.done"
 
     var isDone: Bool {
@@ -28,11 +37,36 @@ enum FirstRunTip: String, CaseIterable {
         UserDefaults.standard.set(true, forKey: rawValue)
     }
 
+    /// Careers that have already been shown their rookie-GM tip (#3008).
+    ///
+    /// One key holding a list of career ids rather than a key per career, so
+    /// ``resetAll()`` clears every save's in the same one line the other tips
+    /// take and nothing accumulates keys a career deletion would orphan.
+    private static let rookieGMSeenKey = "tip.rookieGM.doneCareers"
+
+    private static func rookieGMSeenCareers() -> Set<String> {
+        Set(UserDefaults.standard.stringArray(forKey: rookieGMSeenKey) ?? [])
+    }
+
+    /// Has this career already dismissed its rookie-GM tip?
+    static func rookieGMSeen(career id: UUID) -> Bool {
+        rookieGMSeenCareers().contains(id.uuidString)
+    }
+
+    static func markRookieGMSeen(career id: UUID) {
+        var seen = rookieGMSeenCareers()
+        seen.insert(id.uuidString)
+        UserDefaults.standard.set(seen.sorted(), forKey: rookieGMSeenKey)
+    }
+
     /// Settings → "Reset Tips": every one-time hint shows again.
     static func resetAll() {
         for tip in allCases {
             UserDefaults.standard.removeObject(forKey: tip.rawValue)
         }
+        // The rookie-GM tip's real flag is the per-career list, not the bool
+        // above — clearing only the loop would leave every career still marked.
+        UserDefaults.standard.removeObject(forKey: rookieGMSeenKey)
     }
 }
 
@@ -42,33 +76,50 @@ enum FirstRunTip: String, CaseIterable {
 /// first-time GM makes, picked per career and then never seen again.
 ///
 /// **Every line is about THIS game's engine**, not general football wisdom, and
-/// every number in one is interpolated from the constant that produces it so the
-/// advice cannot outlive the balance it describes. The sources, in order:
+/// every number in one is traced to the function that PRODUCES it at runtime —
+/// which is not always the exported constant that names it. Two of these were
+/// quoting a league-mean rail nothing in the market consults, and a third called
+/// two age schedules identical where they deliberately diverge; where the
+/// runtime answer is a band rather than a number, the line states the band —
+/// which is also what #2987 asked copy to do. The sources, in order:
 ///
-/// 1. `FreeAgencyEngine.capReservePercent` — the reserve exists because the
-///    draft class and the in-season refill cost a measured 6.6 % of cap that
-///    nothing asks permission for.
+/// 1. `FreeAgencyEngine.capReserve(forTeam:)` — the reserve every AI club
+///    actually holds, 0.08 / 0.14 / 0.15 / 0.18 by GM archetype. NOT
+///    `capReservePercent` (0.15): that is the superseded league-average rail,
+///    read by nothing in the market, and quoting it meant a retune of the
+///    function moved the game and not the copy. The band cannot be
+///    interpolated — the function is keyed on a team id — so the two figures
+///    below are written out and must be changed with that switch.
 /// 2. `FreeAgencyEngine.simulateAIFreeAgency` — `CoachingEngine.developmentAppeal`
 ///    (0.85-1.15) weights which club a free agent picks off his shortlist.
-/// 3. `FreeAgencyEngine.marketAgeDiscountFrom` / `marketAgeDiscountPerYear`, which
-///    match `RosterValue.keepScore`'s rate exactly — the market and cutdown day
-///    ask the same question the same way.
-/// 4. `ContractEngine.impliedGuaranteeRate` — a release books that share of the
-///    salary for every year left; `CampRosterEngine.campContractYears` is 1 and a
-///    camp body's release books nothing at all.
+/// 3. `FreeAgencyEngine.marketAgeDiscountFrom` / `marketAgeDiscountPerYear`, whose
+///    rate and start age `RosterValue.agePenaltyPerYear` / `agePenaltyFrom` match
+///    exactly — but the CAPS differ on purpose (`RosterValue.agePenaltyCap` 20 vs
+///    `marketAgeDiscountCap` 14, "set ABOVE the market's 14 … deliberately"), so
+///    cutdown day goes on docking after the market has stopped. The line says so
+///    rather than claiming the two are identical, which they are not at the age
+///    the line itself names.
+/// 4. `ContractEngine.impliedDeadCap` — `impliedGuaranteeRate` (0.15) times
+///    `clubGuaranteeLean(forTeam:)` (0.72-1.30), i.e. 10.8 %-19.5 % a year by
+///    archetype and never a flat 15 for anybody; the line rounds that band
+///    outward to 11-20. Same "cannot be interpolated" note as 1: change the band
+///    with that switch. `CampRosterEngine.campContractYears` is 1, so a camp
+///    body's release still books nothing at all.
 /// 5. `FreeAgencyEngine.ownCoreRetentionsPerClub` — an AI club keeps that many of
 ///    its own before the market opens, out of a cohort of ~30 expiring deals.
 ///
-/// A pool and not one fixed line so a second career opens on something new; the
-/// draw is off the career's own id, so it is stable for that save and cannot
-/// re-roll on a redraw.
+/// A pool and not one fixed line so a second career opens on something new: the
+/// "seen" flag is per career (``FirstRunTip/rookieGMSeen(career:)``), which is
+/// what makes that sentence true — a single global bool would have retired the
+/// whole pool on the first dismissal. The draw is off the career's own id, so it
+/// is stable for that save and cannot re-roll on a redraw.
 enum RookieGMTip {
 
     static let pool: [LocalizedStringKey] = [
-        "Don't spend to the last dollar in March. Rival clubs hold back about \(Int(FreeAgencyEngine.capReservePercent * 100)) % of the cap for the draft class and the men who replace the injured — those bills arrive whether you budgeted for them or not.",
+        "Don't spend to the last dollar in March. Rival clubs hold 8-18 % of the cap back for the draft class and the men who replace the injured — the boldest front offices keep the least, and those bills arrive whether anyone budgeted for them or not.",
         "Hire the coordinators before the market opens. Their schemes decide who actually fits your roster, and a staff with a reputation for developing players pulls free agents your way.",
-        "Age is priced twice. The market marks a free agent down for every year past \(FreeAgencyEngine.marketAgeDiscountFrom), and your own cutdown day marks him down at exactly the same rate — the cheap 30-year-old is cheap for a reason.",
-        "Cutting a veteran is not free: a release books dead money at roughly \(Int(ContractEngine.impliedGuaranteeRate * 100)) % of his salary for every year left on the deal. A camp body on a one-year minimum is the man you can afford to be wrong about.",
+        "Age is priced twice. The market marks a free agent down for every year past \(FreeAgencyEngine.marketAgeDiscountFrom), and your own cutdown day docks him from the same age at the same rate — and keeps docking after the market has stopped. The cheap 30-year-old is cheap for a reason.",
+        "Cutting a veteran is not free: a release books dead money at 11-20 % of his salary for every year left on the deal, depending on how freely that front office guarantees money. A camp body on a one-year minimum is the man you can afford to be wrong about.",
         "Re-sign your own before free agency. A rival club keeps up to \(FreeAgencyEngine.ownCoreRetentionsPerClub) of its own men off the market; anyone you leave unsigned is out there bidding against 31 other front offices.",
     ]
 
