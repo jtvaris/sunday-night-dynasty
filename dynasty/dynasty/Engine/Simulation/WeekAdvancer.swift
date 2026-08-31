@@ -4331,6 +4331,11 @@ enum WeekAdvancer {
             // below picks them up with the holdouts and the unsigned — and the
             // camp grade is what actually decides their August.
             var offseasonOutcomes: [PlayerDevelopmentEngine.OffseasonOutcome] = []
+            // The user's Mentoring screen pairs, decoded once. They reach his
+            // club only — no AI club has any — and they can only narrow the
+            // mentoring pass, never add to it, so this is not a development
+            // edge for playing the screen.
+            let userMentoringPairs = career.mentoringAssignments
             for team in teams {
                 let teamPlayers = allPlayers.filter {
                     $0.teamID == team.id && !$0.isHoldingOut && !CampRosterEngine.isCampBody($0)
@@ -4348,6 +4353,7 @@ enum WeekAdvancer {
                         facilityMultiplier: FacilityEngine.developmentMultiplier(
                             teamID: team.id, owners: facilityOwners
                         ),
+                        assignedMentees: team.id == career.teamID ? userMentoringPairs : [:],
                         onOutcome: { offseasonOutcomes.append($0) }
                     )
                 }

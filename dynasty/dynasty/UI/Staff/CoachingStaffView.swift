@@ -3062,7 +3062,7 @@ struct CoachingStaffView: View {
 
         /// One line of the readiness list.
         struct Check: Identifiable {
-            /// What the row costs the club. `blocking` is reserved for the two
+            /// What the row costs the club. `blocking` is reserved for the
             /// conditions `StaffLedger.advanceBlocker` actually refuses on —
             /// nothing else in this file may claim to hold the calendar.
             enum Weight {
@@ -3295,6 +3295,26 @@ struct CoachingStaffView: View {
                     + "$\(formatBudget(book.remainingMedical))M medical and "
                     + "$\(formatBudget(book.remainingScouting))M scouting still unspent.",
                 tab: nil
+            ))
+        }
+
+        // The scouting department, which the gate now refuses an empty one of
+        // (`StaffLedger.isBlockedOnFirstScout`). Read off the ledger's own
+        // predicate rather than counting seats here, for the same reason the
+        // required chairs above are: a third copy of the rule is how the screen
+        // and the calendar came to disagree in the first place. When the pot
+        // cannot guarantee a signing the ledger does not block, and neither
+        // does this row — it stays amber, because the hole is still real.
+        if book.filledScoutSlots == 0 {
+            checks.append(.init(
+                id: "scouts",
+                weight: book.isBlockedOnFirstScout ? .blocking : .gap,
+                label: "Scouting department",
+                detail: book.isBlockedOnFirstScout
+                    ? "Nobody is scouting the draft class. This seat is what the advance is held on."
+                    : "Nobody is scouting the draft class, and the scouting pot cannot guarantee a "
+                        + "signing — so the calendar is not held on it.",
+                tab: .staff
             ))
         }
 

@@ -226,6 +226,23 @@ final class Career {
     /// Optional new attribute → lightweight migration.
     var developmentReportLogData: Data? = nil
 
+    // MARK: - Mentoring Pairs
+    /// JSON-encoded `[mentorID: menteeID]`, both player IDs on the user's own
+    /// roster — the pairs the Mentoring screen assigns.
+    ///
+    /// The screen held these in `@State` and nothing ever read them, so the
+    /// pairing the user made vanished on dismiss while
+    /// `PlayerDevelopmentEngine.applyMentoring` went on pairing the roster its
+    /// own way. Stored on the career rather than on `Player` because
+    /// `Player.mentorOfPlayerID` already belongs to the free-agency package
+    /// deal (`MentorPairEngine`) and means a different thing.
+    ///
+    /// One mentee per mentor — the shape the screen already models
+    /// (`activeMenteeFor`) and the only shape the engine can act on: a pair
+    /// RESTRICTS a veteran the engine already qualifies to one rookie instead
+    /// of every eligible one. Optional attribute → lightweight migration.
+    var mentoringPairsData: Data? = nil
+
     // MARK: - Injury Return Decisions (R28)
     /// JSON-encoded `[ReturnDecision]` — user-team players in their final
     /// rehab week awaiting a "rush back vs. hold out" call. Ignoring an entry
@@ -690,6 +707,40 @@ extension Career {
         }
         set {
             developmentReportLogData = try? JSONEncoder().encode(Array(newValue.prefix(10)))
+        }
+    }
+}
+
+// MARK: - Mentoring Pairs Codable Bridge
+
+extension Career {
+
+    /// Mentor → mentee, as the Mentoring screen assigned them. Empty when the
+    /// user has never assigned a pair, which is the state every existing save
+    /// opens in (caller saves the context).
+    ///
+    /// Keyed by `uuidString` on the way to disk: a `[UUID: UUID]` encodes as a
+    /// flat alternating array in JSON, which is unreadable in a save file and
+    /// silently loses its shape if the key type ever changes.
+    var mentoringAssignments: [UUID: UUID] {
+        get {
+            guard let data = mentoringPairsData,
+                  let raw = try? JSONDecoder().decode([String: String].self, from: data) else {
+                return [:]
+            }
+            var pairs: [UUID: UUID] = [:]
+            for (mentor, mentee) in raw {
+                guard let mentorID = UUID(uuidString: mentor),
+                      let menteeID = UUID(uuidString: mentee) else { continue }
+                pairs[mentorID] = menteeID
+            }
+            return pairs
+        }
+        set {
+            let raw = newValue.reduce(into: [String: String]()) { result, pair in
+                result[pair.key.uuidString] = pair.value.uuidString
+            }
+            mentoringPairsData = raw.isEmpty ? nil : (try? JSONEncoder().encode(raw))
         }
     }
 }

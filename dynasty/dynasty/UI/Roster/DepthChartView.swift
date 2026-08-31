@@ -1726,6 +1726,38 @@ private struct ComparisonSheet: View {
                             )
                     }
                 }
+
+                // What the other two pickers already print beside the same fit
+                // grade for a man lined up away from his own position — the
+                // `RosterView` starter picker and the `FormationView` player
+                // picker both show `overall x familiarity% = ~N effective`.
+                // This one showed the grade and no cost at all, which made the
+                // depth chart the odd screen out.
+                //
+                // The number is COSMETIC and stays cosmetic:
+                // `VersatilityDevelopmentEngine.positionPerformanceModifier`
+                // has no call sites, the sim never fields a man off-position,
+                // and no snap is docked for this anywhere. The delta in the
+                // indicators column is position-blind for the same reason —
+                // `DepthChart.teamOverall` averages raw `player.overall` — so
+                // the two figures in this row measure different things on
+                // purpose until the sim is taught the difference.
+                //
+                // Printed only where there is a familiarity reading to quote.
+                // Both other pickers list a man as versatile only at
+                // `familiarity(at:) > 0`; at zero there is nothing measured,
+                // and "74 x 0% = ~0 effective" would be an invention rather
+                // than a quotation.
+                if !candidate.isNatural, !slot.acceptsAnyPosition {
+                    let familiarity = player.familiarity(at: slot.basePosition)
+                    if familiarity > 0 {
+                        let effective = Int(Double(player.overall) * Double(familiarity) / 100.0)
+                        Text("\(player.position.rawValue) at \(slot.basePosition.rawValue): "
+                            + "\(player.overall) \u{00d7} \(familiarity)% = ~\(effective) effective")
+                            .font(.system(size: DSType.Size.footnote))
+                            .foregroundStyle(Color.warning)
+                    }
+                }
             }
 
             Spacer()
