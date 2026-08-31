@@ -5,7 +5,7 @@
 > never enter an app target's resources. `league_2026_dev.json` is DEBUG-only;
 > only `league_2026_publish.json` ships in a Release build.
 
-- built: `2026-08-31T12:04:14Z` (the templates themselves are byte-identical on every rebuild — their `generated` stamp is the source snapshot's, `2026-07-29T13:59:05Z`)
+- built: `2026-08-31T13:25:54Z` (the templates themselves are byte-identical on every rebuild — their `generated` stamp is the source snapshot's, `2026-07-29T13:59:05Z`)
 - globalSeed: `20260729` (deterministic — re-running reproduces both files)
 - source: `tools/league-data/raw/league_raw_2026.json` (schemaVersion 2, snapshot 2026-02-28)
 - outputs: `out/league_2026_dev.json` (devProfile), `out/league_2026_publish.json` (publishProfile)
@@ -112,7 +112,7 @@ Per player: `quality = (1 - w_ped) * (0.60 * production + 0.40 * role) + w_ped *
 
 `careerArc` = per-season production percentile → OVR band → ±2 seeded jitter, anchored so the 2025 row lands within ±3 of `ratingTarget`. In the publish file this is the ONLY career record that ships.
 
-`contractYears` is the value `LeagueGenerator.realisticContractYears` hands this row at import, replayed here rather than invented: the seed is `globalSeed + entitySeed(id) + contractSeedOffset` and the branch is the row's own `yearsPro` (0-2 pro → 3-4 years, 3-6 → 2-4, 7+ → 1-2). Baking it does not change what an import produces — `LeagueTemplateImporter` still makes the draw, because the same sub-stream prices the man's salary and morale immediately afterwards, and asserts the drawn value equals the baked one. What it changes is who can READ it: before this field, a template player's contract existed only after a career had been created, so the pre-career team picker could not tell a prospective club's expiring stars from its signed ones. Gate 20 re-measures the bands and reports the expiring population.
+`contractYearsRemaining` is the value `LeagueGenerator.realisticContractYears` hands this row at import, replayed here rather than invented: the seed is `globalSeed + entitySeed(id) + contractSeedOffset` and the branch is the row's own `yearsPro` (0-2 pro → 3-4 years, 3-6 → 2-4, 7+ → 1-2). Baking it does not change what an import produces — `LeagueTemplateImporter` still makes the draw, because the same sub-stream prices the man's salary and morale immediately afterwards, and asserts the drawn value equals the baked one. What it changes is who can READ it: before this field, a template player's contract existed only after a career had been created, so the pre-career team picker could not tell a prospective club's expiring stars from its signed ones. It still does not: no screen reads the field yet (`TeamPreview` carries no contract data), so this bake unblocks that item rather than closing it. Gate 20 re-measures the bands and reports the expiring population.
 
 ## 4. QA_REPORT carry-in conditions
 
