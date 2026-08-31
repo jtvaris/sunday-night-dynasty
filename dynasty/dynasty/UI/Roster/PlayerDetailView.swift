@@ -2226,6 +2226,18 @@ struct PlayerDetailView: View {
         let phase = developmentPhase
         let priced = player.annualSalary > 0
 
+        // The verdict is a RATIO against what he is paid, so on a man with no
+        // salary on file it measures nothing: `marketValueComparison` returns
+        // `.bargain` there by fiat, to surface the upside on an unsigned man.
+        // Quoting that label below would have the recommendation say "the
+        // market rates him Bargain" two rows under the note line that has just
+        // said there is nothing yet for the market to be measured against —
+        // the one thing this card is not allowed to do. Every branch that
+        // names the verdict names it through here.
+        let marketClause = priced
+            ? "the market rates him \(value.label)"
+            : "there is no salary on file for the market to measure him against"
+
         // 1. Both money verdicts pointing the same way: above the market AND
         //    past the peak. Reprice while there is still a deal to reprice;
         //    otherwise the chart is the only exit left.
@@ -2249,7 +2261,7 @@ struct PlayerDetailView: View {
 
         // 4. The extension window, with nothing arguing against it.
         if canExtend && phase != .declining && value != .overpaid {
-            var reason = "He has \(contractYearsText) left, the market rates him \(value.label), and he is \(phase.label) on the age curve. The years after this deal are the ones worth buying — what they cost is the agent's to name."
+            var reason = "He has \(contractYearsText) left, \(marketClause), and he is \(phase.label) on the age curve. The years after this deal are the ones worth buying — what they cost is the agent's to name."
             if let info = schemeMismatchInfo {
                 reason += " He is still installing \(info.teamScheme) from scratch, so you are buying years the coordinator cannot fully use yet."
             }
@@ -2257,11 +2269,25 @@ struct PlayerDetailView: View {
         }
 
         // 5. Nothing on the file is asking for a decision. Say so rather than
-        //    manufacture one.
+        //    manufacture one — but an Overpaid verdict IS the file asking, and
+        //    claiming otherwise contradicts the Contract card directly above,
+        //    which is at that moment showing the Overpaid pill and a
+        //    `marketGapNote` spelling the gap out in dollars.
+        //
+        //    An Overpaid man only reaches this line with BOTH contract doors
+        //    shut: too much deal left to extend (`canExtend` is false, or
+        //    branch 4 would have him), and no repricing on offer (branch 2
+        //    would have him otherwise — `canRenegotiate` is false for a
+        //    franchise-tagged man and for every player in a sandbox career).
+        //    So what is missing here is a lever, not a problem, and the note
+        //    says that instead of denying the problem.
         if player.contractYearsRemaining > Self.extensionWindowYears {
-            return (.standPat, "He has \(contractYearsText) left, which is too much deal to renew, and the market rates him \(value.label). Nothing on this file is asking for a decision this season.")
+            let closer = value == .overpaid
+                ? "That gap is real, but with that much deal still to run there is no extension or repricing to open from here this season."
+                : "Nothing on this file is asking for a decision this season."
+            return (.standPat, "He has \(contractYearsText) left, which is too much deal to renew, and \(marketClause). \(closer)")
         }
-        return (.standPat, "Nothing on this file pulls in one direction: the market rates him \(value.label), he is \(phase.label) on the age curve, and the chart has him at \(tradeValueLabel).")
+        return (.standPat, "Nothing on this file pulls in one direction: \(marketClause), he is \(phase.label) on the age curve, and the chart has him at \(tradeValueLabel).")
     }
 
     // MARK: - Action Buttons (#35)
