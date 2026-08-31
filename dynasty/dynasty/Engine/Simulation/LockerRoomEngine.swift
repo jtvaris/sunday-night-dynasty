@@ -185,9 +185,33 @@ enum LockerRoomEngine {
     static let seasonMoraleSwingCap = 8
 
     /// Weekly morale a `.stats`-motivated player wins or loses on his box
-    /// score. Same weight as the `.winning` motivator, and well inside
-    /// `weeklyMoraleSwingCap` so production colours a week rather than
-    /// deciding it.
+    /// score. Same weight as the `.winning` motivator.
+    ///
+    /// OPEN GAP — being 2 against a cap of 3 does NOT make this "well inside"
+    /// anything, because it is added to `delta` in `weeklyMoraleUpdate` BEFORE
+    /// the `weeklyMoraleSwingCap` clamp, and by then the result term has
+    /// usually spent the whole budget. Traced at chemistry 58 (the Average
+    /// band the weekly doc says most clubs sit in), what the term is actually
+    /// worth after the clamp:
+    ///
+    /// - WIN + big game: **0** for seven of the nine archetypes. Base +3 is
+    ///   already at the cap, and `.feelPlayer` (+3), `.dramaQueen` (+2),
+    ///   `.teamLeader`/`.mentor`/`.fieryCompetitor` (+1) are past it. Only
+    ///   `.steadyPerformer`/`.quietProfessional`, damped to +1, receive it.
+    /// - LOSS + big game: +1 or +2 for six of the nine — the reward registers
+    ///   only when the club LOST.
+    /// - WIN + zero touches: −1 or −2 for seven of the nine.
+    /// - LOSS + zero touches: **0** for seven of the nine — base −3 is already
+    ///   at the cap, so being shut out in a defeat costs nothing extra.
+    ///
+    /// So production currently moves morale only in the direction OPPOSITE to
+    /// the result, and the decided behaviour for #3265 ("zero touches loses 2
+    /// morale, a big game gains 2") lands in neither headline case. Closing it
+    /// means picking one of: raise `weeklyMoraleSwingCap`, apply this term
+    /// after the clamp (both widen the weekly envelope past ±3 and will move
+    /// harness bands), or accept the result-opposed mechanic and reword the
+    /// player-facing promise. That is a balance call, so the constant is left
+    /// where the decision found it.
     static let statsProductionSwing = 2
 
     /// Applies one point of pull toward `moraleBaseline`, never overshooting it.
@@ -443,10 +467,35 @@ enum LockerRoomEngine {
     /// is the "production dropped" case the card copy promises, a genuine big
     /// game is the reward, and the ordinary Sunday in between moves nothing.
     ///
-    /// A `nil` line is a zero-touch game, not missing data — the sim writes a
-    /// line only for a man who registered something, and whether a reading
-    /// exists at all is decided one level up by `gameStats`. An injured player
-    /// is exempt: he had no chance at the volume he is being judged on.
+    /// A `nil` line means the man was not DRESSED — not that he dressed and
+    /// registered nothing. `GameSimulator.initializeStats` seeds an all-zero
+    /// line for every player `MedicalEngine.dressed` returns (the whole healthy
+    /// roster), and `finalPlayerStats = Array(statsAccumulator.values)` ships
+    /// the lot unfiltered, so a man who never touched the ball IS in the box
+    /// score with zeroes. Whether any reading exists at all is decided one
+    /// level up by `gameStats`. An injured player is exempt: he had no chance
+    /// at the volume he is being judged on.
+    ///
+    /// OPEN GAP — who the zero-touch branch actually reaches. Since #3719 set
+    /// `PlaySimulator.primaryTargetShare` to 1.0, `Double.random(in: 0..<1) <
+    /// 1.0` is always true, so `weightedReceiverSelection` can only ever pick
+    /// out of `primaryTargets` (top-3 WR + best TE + best RB), and `findQB` /
+    /// `findRB` / `findWR` field only the top man at their spot. WR4+, TE2,
+    /// RB2, FB and QB2 therefore cannot register a single touch in any
+    /// simulated game — while the five who ARE fielded practically always
+    /// register one over a full game's attempts. The penalty has consequently
+    /// inverted: it almost never reaches the starter whose usage dried up (the
+    /// case the card copy describes) and always reaches the backup, who cannot
+    /// escape it by playing better. It also lands on the user's roster and his
+    /// weekly opponent alone, because theirs is the only real box score the
+    /// week produces — no AI club pays it.
+    ///
+    /// Traced over a 17-week 11-6 season at chemistry 58, starting morale 70, a
+    /// stats-motivated backup finishes below an identical non-stats teammate by
+    /// 2-4 morale for most archetypes and by 14 for `.steadyPerformer` /
+    /// `.quietProfessional`, whose damping leaves clamp headroom for the full
+    /// −2 every week. Whether an unplayable backup SHOULD be unhappy about
+    /// usage is a design call, so nothing is exempted here yet.
     ///
     /// Only the offensive skill positions are judged. `PlayerGameStats` has no
     /// column an offensive lineman or a punter can fill (see
