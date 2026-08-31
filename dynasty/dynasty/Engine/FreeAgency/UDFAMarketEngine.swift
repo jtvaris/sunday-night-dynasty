@@ -1055,7 +1055,21 @@ enum UDFAMarketEngine {
 
             let ask = askingPrice(salaryCap: team.salaryCap)
             let years = contractYears(salaryCap: team.salaryCap)
-            var needs = DraftEngine.teamNeedDeficits(roster: roster, limit: 5)
+            // `club:` turns on the scheme-fit rung, so an undrafted man who can
+            // run what the club installs is worth a look at a position the club
+            // is otherwise stocked at. It reads `Team.lastOffensiveSchemeRaw` —
+            // the snapshot the last camp wrote — because `postAIOffers` is
+            // handed prospects, teams, players and a `Career` and never a staff
+            // or a `ModelContext` to fetch one from. The UDFA market runs right
+            // after the draft, still ahead of `.trainingCamp`, so for a club
+            // that changed a coordinator this is one hire behind the board the
+            // draft room itself just used.
+            //
+            // The `topTeamNeeds` fallback deliberately stays scheme-blind: it
+            // fires only when the club has NO hole at all, where it is a
+            // preference order and not a need read, and the rung would only tilt
+            // it toward positional weight (see `topTeamNeeds`).
+            var needs = DraftEngine.teamNeedDeficits(roster: roster, limit: 5, club: team)
             if needs.isEmpty { needs = DraftEngine.topTeamNeeds(roster: roster, limit: 5) }
             let needRank = Dictionary(
                 uniqueKeysWithValues: needs.enumerated().map { ($0.element, $0.offset) }

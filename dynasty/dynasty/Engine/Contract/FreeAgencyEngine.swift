@@ -1653,8 +1653,23 @@ enum FreeAgencyEngine {
             // quarterback, end, corner, receiver or left tackle — a positional
             // bias wearing a need model's clothes, on the one decision that
             // decides whether a club keeps its own man.
+            //
+            // `club:` turns on the scheme-fit rung of the same need model: a
+            // room that is deep and graded and cannot run what the club
+            // installed is a hole, and the club that is about to let its own
+            // starter walk should read it as one. This path has no staff in
+            // hand — `resignAIOwnCore` takes players and teams and no
+            // `ModelContext` — so the rung reads `Team.lastOffensiveSchemeRaw`,
+            // the snapshot the last camp wrote. That is stale by one
+            // coordinator hire for a club that changed one at
+            // `.coachingChanges`; the market pass below (`simulateAIFreeAgency`)
+            // does hold the coaches and passes the live install instead.
             let topNeeds = Set(
-                DraftEngine.teamNeedDeficits(roster: rosterByTeam[team.id] ?? [], limit: 5)
+                DraftEngine.teamNeedDeficits(
+                    roster: rosterByTeam[team.id] ?? [],
+                    limit: 5,
+                    club: team
+                )
             )
             // Spendable = cap minus the market's reserve minus what is already
             // committed for next league year. Deliberately measured against the
@@ -2473,9 +2488,22 @@ enum FreeAgencyEngine {
             let coreReference = TradeValueEngine.leagueCoreReference(allPlayers: rosterPlayers)
             for team in teams {
                 let roster = rosterByTeam[team.id] ?? []
+                // The LIVE install, off the staff this function already
+                // fetched. `.freeAgency` sits four phases before
+                // `.trainingCamp`, the only site that writes
+                // `Team.lastOffensiveSchemeRaw`, so the snapshot names last
+                // season's system all through the market and a club that just
+                // hired a coordinator would shop against a playbook it no
+                // longer runs. `WeekAdvancer.installedOffensiveScheme(staff:)`
+                // is the one resolver — the draft room and the camp writer read
+                // it too, so all three agree on what a club runs.
+                let staff = coachesByTeam[team.id] ?? []
                 let deficits = DraftEngine.teamNeedDeficits(
                     roster: roster,
-                    limit: Position.allCases.count
+                    limit: Position.allCases.count,
+                    club: team,
+                    installedOffensiveScheme: WeekAdvancer.installedOffensiveScheme(staff: staff)?.rawValue,
+                    installedDefensiveScheme: WeekAdvancer.installedDefensiveScheme(staff: staff)?.rawValue
                 )
                 deficitPositionsByTeam[team.id] = Set(deficits)
                 topNeedsByTeam[team.id] = Set(deficits.prefix(5))
@@ -2978,9 +3006,17 @@ enum FreeAgencyEngine {
             let coreReference = TradeValueEngine.leagueCoreReference(allPlayers: rosterPlayers)
             for team in aiTeams {
                 let roster = rosterByTeam[team.id] ?? []
+                // Same board the bulk market reads, with the scheme-fit rung on
+                // — but off the last camp's snapshot rather than the live
+                // install: `generateAIOffers` is handed agents, teams and
+                // players and never a `ModelContext`, so it cannot resolve a
+                // staff. For a club that changed a coordinator at
+                // `.coachingChanges` the fit half is therefore one hire behind
+                // here while `simulateAIFreeAgency` has it current.
                 let deficits = DraftEngine.teamNeedDeficits(
                     roster: roster,
-                    limit: Position.allCases.count
+                    limit: Position.allCases.count,
+                    club: team
                 )
                 deficitPositionsByTeam[team.id] = Set(deficits)
                 topNeedsByTeam[team.id] = Set(deficits.prefix(5))
