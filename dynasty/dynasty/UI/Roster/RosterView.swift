@@ -75,6 +75,8 @@ struct RosterView: View {
         case injuryReport
         /// §5.1: practice squad + league poach board.
         case practiceSquad
+        /// D6: the year-round street wire (`StreetFreeAgencyView`).
+        case streetFreeAgency
 
         var id: String {
             switch self {
@@ -83,6 +85,7 @@ struct RosterView: View {
             case .groupAssessment:            return "assessment"
             case .injuryReport:               return "injury"
             case .practiceSquad:              return "practiceSquad"
+            case .streetFreeAgency:           return "streetFreeAgency"
             }
         }
     }
@@ -460,6 +463,10 @@ struct RosterView: View {
                 if let career {
                     PracticeSquadView(career: career)
                 }
+            case .streetFreeAgency:
+                if let career {
+                    StreetFreeAgencyView(career: career)
+                }
             }
         }
         .toolbar {
@@ -476,7 +483,30 @@ struct RosterView: View {
                 practiceSquadButton
             }
             ToolbarItem(placement: .primaryAction) {
+                streetFreeAgencyButton
+            }
+            ToolbarItem(placement: .primaryAction) {
                 leagueRostersButton
+            }
+        }
+    }
+
+    // MARK: - Street Free Agency Button (D6)
+
+    /// Entry point into the year-round street wire.
+    ///
+    /// It hangs off the roster screen and not off the free-agency flow on
+    /// purpose: the hole it fixes is a club that has already LEFT free agency —
+    /// no kicker, a corner short in October — and the roster is the one screen
+    /// that is reachable in every phase. `StreetFreeAgencyView` itself decides
+    /// whether the door is open (`InSeasonMarketEngine.isOpenToUser`).
+    @ViewBuilder
+    private var streetFreeAgencyButton: some View {
+        if career != nil {
+            Button {
+                activeSheet = .streetFreeAgency
+            } label: {
+                Label("Street Free Agents", systemImage: "figure.american.football")
             }
         }
     }
