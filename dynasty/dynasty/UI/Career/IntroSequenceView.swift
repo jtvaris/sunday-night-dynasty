@@ -121,6 +121,12 @@ struct IntroSequenceView: View {
                         rosterCount: players.count,
                         openStaffSeats: openStaffSeats,
                         draftPickCount: draftPicks.count,
+                        // This style builds the neighbouring page so a swipe
+                        // has something to reveal, so the closing screen's
+                        // `onAppear` is not the moment the player reaches it.
+                        // The confetti is the one thing here that ends
+                        // invisible, so it is fired off the selection instead.
+                        isActive: currentStep == 4,
                         onEnter: { completeIntro() }
                     )
                     .tag(4)
@@ -1733,6 +1739,17 @@ private struct ReadyToBeginStep: View {
     let rosterCount: Int
     let openStaffSeats: Int
     let draftPickCount: Int
+    /// Whether this is the page the player is actually looking at.
+    ///
+    /// A `.page` `TabView` is a `UIPageViewController`, which builds the pages
+    /// either side of the selected one so a swipe has something to reveal — so
+    /// `onAppear` here can fire while step 4 is still on screen. The staged
+    /// fades survive that, because each one ends in a visible steady state and
+    /// firing early is simply never noticed. The burst does not: it ends
+    /// invisible, runs once, and has no repeat and no replay path, so an early
+    /// start means the celebration is over before the player arrives. It is
+    /// built off this flag instead.
+    let isActive: Bool
     let onEnter: () -> Void
 
     @State private var showTitle = false
@@ -1858,8 +1875,18 @@ private struct ReadyToBeginStep: View {
                                 .foregroundStyle(Color.textPrimary)
 
                             if let team = team {
+                                // #2997 — the line the typographic step below
+                                // is measured against, so it belongs on the
+                                // same ladder. `.title3` is 20 pt at default
+                                // Dynamic Type: it sat two points under "Build
+                                // Your Dynasty." (a fixed 22) and overtook it
+                                // at the first Larger Text step, inverting the
+                                // hierarchy at exactly the sizes it matters
+                                // most. Nothing in `DSType` scales — the whole
+                                // ladder is fixed — so the fix is the ladder,
+                                // not a second scaling font on one screen.
                                 Text("with the \(team.fullName)")
-                                    .font(.title3.weight(.medium))
+                                    .font(.system(size: DSType.Size.title3, weight: .medium))
                                     .foregroundStyle(Color.textSecondary)
                             }
 
@@ -1915,7 +1942,14 @@ private struct ReadyToBeginStep: View {
             // between the player and the button underneath it. It owns its own
             // timing (see the type), and it is simply not built under Reduce
             // Motion.
-            if !reduceMotion {
+            //
+            // Built only while this step is the selected page: the burst starts
+            // itself on appear, and in a paged `TabView` "appeared" is not
+            // "on screen" (see `isActive`). Gating construction rather than the
+            // flag inside also gives the fall the replay it never had — swipe
+            // back to the roadmap and forward again and the confetti runs
+            // again, instead of the moment being spent on a page nobody saw.
+            if !reduceMotion && isActive {
                 IntroConfettiBurst(clubColor: clubAccent)
                     .ignoresSafeArea()
             }
@@ -2062,10 +2096,12 @@ private struct ReadyToBeginStep: View {
         ) {
             glowAmount = 0.7
         }
-        // #3007's burst is not driven from here — `IntroConfettiBurst` starts
-        // itself on appear, so the fall cannot be restarted by a redraw of this
-        // screen. Its first piece lands with the badge, not with the CTA: the
-        // moment being marked is reaching the end of the briefing.
+        // #3007's burst is not driven from here, and the reason is not redraw
+        // safety — a `@State` flag set in this function would survive a redraw
+        // as well as one set in `onAppear` does. It is that this function runs
+        // on `onAppear`, which a paged `TabView` fires for the page next to the
+        // one being read; the burst is gated on `isActive` instead, so it falls
+        // when the player is actually here.
     }
 }
 
