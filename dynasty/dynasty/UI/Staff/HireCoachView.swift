@@ -52,9 +52,10 @@ struct HireCoachView: View {
     /// THIS one". Only a ceiling he sets himself can answer that.
     ///
     /// `nil` means "untouched", which reads as the top of the slider's range —
-    /// the whole remaining budget, i.e. exactly what the old switch meant when
-    /// it was ON. Kept optional rather than seeded in `.task` so the board never
-    /// renders a frame filtered against a not-yet-initialised zero.
+    /// the priciest ask on the board, i.e. no one excluded. Kept optional rather
+    /// than seeded in `.task` so the board never renders a frame filtered
+    /// against a not-yet-initialised zero, and so an untouched control can never
+    /// be a filter the user did not ask for (see `salarySliderRange`).
     @State private var maxSalary: Double?
     @State private var schemeFilter: String = "All"
     @State private var showValueLegend: Bool = false
@@ -138,6 +139,34 @@ struct HireCoachView: View {
     /// Whether any team scheme can be inferred — used to hide the Fit column otherwise.
     private var hasInferableTeamScheme: Bool {
         teamOffensiveScheme != nil || teamDefensiveScheme != nil
+    }
+
+    /// The men who stay when this seat changes hands — the whole staff except
+    /// the incumbent the hire would replace.
+    ///
+    /// Two of the six inputs `CoachingModifiers.ratings` reads are a MAX over
+    /// the staff: game planning over HC/AHC/OC/DC, morale influence over every
+    /// coach. A candidate's own rating on those is therefore worth only what it
+    /// adds on top of the men already in the building, which is what the hire
+    /// card has to quote (see `CandidateDetailSheet.projectedImpactEstimates`).
+    private var staffExcludingSeat: [Coach] {
+        allCoaches.filter { $0.teamID == teamID && $0.role != role }
+    }
+
+    /// Sharpest game planner left once the seat is vacated — the number the
+    /// candidate's `gamePlanning` has to beat before the sim notices him.
+    /// Mirrors the planner set in `CoachingModifiers.ratings(from:)`.
+    private var staffBestGamePlanning: Int? {
+        let planners: Set<CoachRole> = [.headCoach, .assistantHeadCoach,
+                                        .offensiveCoordinator, .defensiveCoordinator]
+        return staffExcludingSeat.filter { planners.contains($0.role) }
+            .map(\.gamePlanning).max()
+    }
+
+    /// Best `moraleInfluence` left once the seat is vacated. Every role counts —
+    /// `CoachingModifiers.ratings(from:)` maxes this one over the whole staff.
+    private var staffBestMoraleInfluence: Int? {
+        staffExcludingSeat.map(\.moraleInfluence).max()
     }
 
     /// The current coach in the role being hired for (Fix #63: comparison).
@@ -277,15 +306,29 @@ struct HireCoachView: View {
 
     /// The band the max-salary slider runs over: the role's own going-rate floor
     /// (`CoachRole.salaryRange.min`, the band the candidate generator draws
-    /// from) up to whatever is left in the pot.
+    /// from) up to the priciest ask ON THE BOARD.
     ///
-    /// `nil` when the pot cannot even cover the floor. There is no ceiling left
-    /// to choose then, so the control is not offered and the board is not
-    /// filtered — every row shows, over budget and greyed, which is the honest
-    /// picture of a club that cannot afford this seat.
+    /// The ceiling is the market's, not the pot's. Anchored to `remainingBudget`
+    /// it made the control a filter that was already on the moment the screen
+    /// opened: `maxSalary` starts `nil`, which reads as the top of this range,
+    /// so `filteredCandidates` silently dropped everyone the club could not
+    /// afford while `isSalaryCapNarrowed` — and therefore the empty state's
+    /// "Clear filters" escape — stayed false. A club with $1.5M left saw an
+    /// empty OC board (the floor is 800, a mid-pack OC asks ~2,400), was told
+    /// "Nobody is available for this job right now" with twenty men on the
+    /// board, and had no way to widen a slider already at its right end.
+    ///
+    /// Over-budget men belong on the board. `candidateRow` already has the
+    /// treatment for them — greyed, salary in red, "over budget" status — and a
+    /// GM is allowed to see the market he cannot afford.
+    ///
+    /// `nil` before the pool exists, or when the whole board sits at or below
+    /// the role floor: no ceiling is worth choosing then, so the control is not
+    /// offered and nothing is filtered.
     private var salarySliderRange: ClosedRange<Double>? {
         let floor = Double(role.salaryRange.min)
-        let ceiling = Double(remainingBudget)
+        guard let topAsk = candidates.map({ $0.salary }).max() else { return nil }
+        let ceiling = Double(topAsk)
         guard ceiling > floor else { return nil }
         return floor...ceiling
     }
@@ -298,7 +341,7 @@ struct HireCoachView: View {
     }
 
     /// True only while the slider is excluding somebody — i.e. it has been
-    /// pulled below the full remaining budget.
+    /// pulled below the priciest ask on the board.
     private var isSalaryCapNarrowed: Bool {
         guard let range = salarySliderRange, let cap = salaryCap else { return false }
         return Double(cap) < range.upperBound
@@ -612,6 +655,8 @@ struct HireCoachView: View {
                 isHired: hiredCoachID == candidate.id,
                 headCoach: teamHeadCoach,
                 currentCoach: currentCoach,
+                staffBestGamePlanning: staffBestGamePlanning,
+                staffBestMoraleInfluence: staffBestMoraleInfluence,
                 candidateRank: candidateRank(for: candidate),
                 totalCandidates: filteredCandidates.count,
                 schemeFitResult: schemeFit(for: candidate),
@@ -1632,6 +1677,13 @@ private struct CandidateDetailSheet: View {
     let isHired: Bool
     let headCoach: Coach?
     let currentCoach: Coach?
+    /// Sharpest game planner already in the building, EXCLUDING this seat.
+    /// `CoachingModifiers.ratings(from:)` takes the max over HC/AHC/OC/DC, so
+    /// this is the bar the candidate's own `gamePlanning` has to clear before
+    /// the sim changes at all. `nil` when no other planner is under contract.
+    let staffBestGamePlanning: Int?
+    /// The same for `moraleInfluence`, which the engine maxes over EVERY coach.
+    let staffBestMoraleInfluence: Int?
     let candidateRank: Int
     let totalCandidates: Int
     let schemeFitResult: (color: Color, label: String)?
@@ -1660,12 +1712,14 @@ private struct CandidateDetailSheet: View {
     @State private var proposedYears: Int = 3
     @State private var negotiationResult: NegotiationResult?
 
-    init(candidate: Coach, remainingBudget: Int, isHired: Bool, headCoach: Coach?, currentCoach: Coach?, candidateRank: Int, totalCandidates: Int, schemeFitResult: (color: Color, label: String)?, installedSchemeName: String? = nil, userIsHeadCoach: Bool = false, userCoachingStyle: CoachingStyle? = nil, marketRivals: Int = 0, fallbackCandidate: FallbackCandidate? = nil, onHire: @escaping () -> Void, onRejected: (() -> Void)? = nil) {
+    init(candidate: Coach, remainingBudget: Int, isHired: Bool, headCoach: Coach?, currentCoach: Coach?, staffBestGamePlanning: Int? = nil, staffBestMoraleInfluence: Int? = nil, candidateRank: Int, totalCandidates: Int, schemeFitResult: (color: Color, label: String)?, installedSchemeName: String? = nil, userIsHeadCoach: Bool = false, userCoachingStyle: CoachingStyle? = nil, marketRivals: Int = 0, fallbackCandidate: FallbackCandidate? = nil, onHire: @escaping () -> Void, onRejected: (() -> Void)? = nil) {
         self.candidate = candidate
         self.remainingBudget = remainingBudget
         self.isHired = isHired
         self.headCoach = headCoach
         self.currentCoach = currentCoach
+        self.staffBestGamePlanning = staffBestGamePlanning
+        self.staffBestMoraleInfluence = staffBestMoraleInfluence
         self.candidateRank = candidateRank
         self.totalCandidates = totalCandidates
         self.schemeFitResult = schemeFitResult
@@ -1855,147 +1909,314 @@ private struct CandidateDetailSheet: View {
 
     // MARK: - #22: Projected Impact estimates
 
-    /// Role-aware contribution estimates derived from the coach's attributes.
-    /// Numbers are intentionally conservative.
+    /// The four layer weights of `CoachingEngine.hierarchicalDevelopmentBonus`,
+    /// per 50 rating points above `CoachingEngine.developmentBonusPivot`. Copied
+    /// rather than called: that function wants a whole staff and a `Player`, and
+    /// these are the coefficients it applies.
+    private static let hcDevelopmentLayer = 0.08
+    private static let ahcDevelopmentLayer = 0.04
+    private static let coordinatorDevelopmentLayer = 0.10
+    private static let positionDevelopmentLayer = 0.15
+
+    /// The staff's game-plan edge in points of completion probability, for a
+    /// given best-planner rating. `CoachingModifiers` Mech 2; `nil` means no
+    /// planner at all, which is the engine's zero.
+    private func planEdgePts(_ rating: Int?) -> Double {
+        guard let rating else { return 0.0 }
+        let edge = min(CoachingModifiers.planCompletionCap,
+                       max(-CoachingModifiers.planCompletionCap,
+                           (Double(rating) - CoachingModifiers.planCenter)
+                               * CoachingModifiers.planCompletionSlope))
+        return edge * 100.0
+    }
+
+    /// Points of pre-game morale a staff carrying these two levers produces.
+    /// `CoachingModifiers` Mech 3/5, clamped exactly as the engine clamps it.
+    private func moraleBumpPts(bestInfluence: Int?, hcMotivation: Int?) -> Double {
+        var bump = 0.0
+        if let bestInfluence {
+            bump += (Double(bestInfluence) - CoachingModifiers.moraleCenter)
+                * CoachingModifiers.moraleInfluenceSlope
+        }
+        if let hcMotivation {
+            bump += (Double(hcMotivation) - CoachingModifiers.moraleCenter)
+                * CoachingModifiers.motivationSlope
+        }
+        return min(CoachingModifiers.moraleBumpCap,
+                   max(-CoachingModifiers.moraleBumpCap, bump))
+    }
+
+    /// One layer of the development hierarchy, as the percentage it adds to the
+    /// development points of the players it covers.
+    private func developmentPct(_ rating: Int, layer: Double) -> Double {
+        (Double(rating) - CoachingEngine.developmentBonusPivot) / 50.0 * layer * 100.0
+    }
+
+    /// Mech 2 as a DELTA: the staff's game-plan edge once this man replaces the
+    /// incumbent, minus the edge it has today.
+    ///
+    /// The engine takes game planning as a max over HC/AHC/OC/DC, so a
+    /// candidate's own rating buys nothing until it beats the men already in the
+    /// building. The incumbent sits in the seat being filled — he is a planner
+    /// exactly when the candidate is, and he leaves with the seat, so a hire can
+    /// lower this figure as well as raise it.
+    private var gamePlanImpact: (label: String, value: String, icon: String, color: Color) {
+        let before = [staffBestGamePlanning, currentCoach?.gamePlanning].compactMap { $0 }.max()
+        let after = [staffBestGamePlanning, candidate.gamePlanning].compactMap { $0 }.max()
+        let delta = planEdgePts(after) - planEdgePts(before)
+        let moves = abs(delta) >= 0.05
+        return (
+            label: "Game-plan edge",
+            value: moves
+                ? "\(delta >= 0 ? "+" : "")\(String(format: "%.1f", delta)) pts completion"
+                : "No change",
+            icon: "doc.text.fill",
+            color: moves ? (delta > 0 ? .success : .danger) : .textTertiary
+        )
+    }
+
+    /// Mech 3/5 as a DELTA, for the same reason as `gamePlanImpact`: morale
+    /// influence is a max over the WHOLE staff. Motivation is the head coach's
+    /// lever alone, so it only moves when the seat being filled is his.
+    private var moraleImpact: (label: String, value: String, icon: String, color: Color) {
+        let before = moraleBumpPts(
+            bestInfluence: [staffBestMoraleInfluence, currentCoach?.moraleInfluence].compactMap { $0 }.max(),
+            hcMotivation: headCoach?.motivation
+        )
+        let after = moraleBumpPts(
+            bestInfluence: [staffBestMoraleInfluence, candidate.moraleInfluence].compactMap { $0 }.max(),
+            hcMotivation: candidate.role == .headCoach ? candidate.motivation : headCoach?.motivation
+        )
+        let delta = after - before
+        let moves = abs(delta) >= 0.05
+        return (
+            label: "Pre-game morale",
+            value: moves
+                ? "\(delta >= 0 ? "+" : "")\(String(format: "%.1f", delta)) pts"
+                : "No change",
+            icon: "heart.fill",
+            color: moves ? (delta > 0 ? .success : .danger) : .textTertiary
+        )
+    }
+
+    /// What the sim will actually do differently with this man in the seat.
+    ///
+    /// ## Every line is an engine coefficient (#3046, #3087)
+    ///
+    /// This card used to quote an "offensive efficiency", a "team reputation"
+    /// and a "roster-wide dev" percentage. None of the three exists: nothing in
+    /// the sim has ever computed an efficiency, `mediaHandling` is read by
+    /// `CoachingEngine`'s own overall and by nothing else in the engine, and the
+    /// head coach's development layer is driven by `motivation`, not by
+    /// `playerDevelopment`. The vacancy row on the staff screen was rewritten to
+    /// quote the levers themselves (`CoachingStaffView.hiringImpactDescription`)
+    /// and this card — two taps down the same flow — kept the invented units, so
+    /// the OC seat advertised "Up to +4 pts completion rate" and the man tapped
+    /// from that very row answered "Offensive efficiency +1.4%".
+    ///
+    /// Every figure below now comes off the code that applies it:
+    ///
+    /// * `CoachingModifiers` Mech 1 — coordinator grade, which is
+    ///   `(playCalling + adaptability)/2` and not play-calling alone, onto
+    ///   completion probability.
+    /// * `CoachingModifiers` Mech 2 — game planning onto completion, taken as a
+    ///   MAX over HC/AHC/OC/DC.
+    /// * `CoachingModifiers.disciplineScale` (Mech 4) — the head coach's
+    ///   discipline scaling this club's own penalty AND fumble frequencies.
+    /// * `CoachingModifiers` Mech 3/5 — morale influence (a MAX over the whole
+    ///   staff) and the head coach's motivation, onto pre-game morale.
+    /// * `CoachingEngine.hierarchicalDevelopmentBonus` — its four layers, worth
+    ///   0.08 (HC, off `motivation`), 0.04 (AHC), 0.10 (coordinator, and the
+    ///   special-teams coordinator IS the coordinator for a kicker) and 0.15
+    ///   (position coach) per 50 points above `developmentBonusPivot`.
+    /// * `MedicalEngine` and `WeekAdvancer.computeRecoveryRate` for the medical
+    ///   and strength seats, whose `playerDevelopment` is an injury and recovery
+    ///   lever and never a development one.
+    ///
+    /// The head-coach seat's older "Projected wins" line stays deleted for the
+    /// same reason (#3087). It was `clamp((ovr·0.5 + mot·0.25 + disc·0.25 - 65)
+    /// · 0.04, -2, 2)`, and every coaching term the sim has is PER-PLAY —
+    /// turning one into wins needs a plays-per-season and a points-to-wins
+    /// conversion this game does not have.
+    ///
+    /// ## The two max-mechanics are quoted as a delta, not as a score
+    ///
+    /// Game planning and morale influence are maxima over the staff, so quoting
+    /// a candidate's raw rating got the SIGN wrong, not merely the size: an
+    /// assistant on gamePlanning 60 behind a head coach on 85 printed "-0.6 pts
+    /// completion" in red when hiring him moves the sim by exactly zero. Those
+    /// two lines compare the staff's figure after the hire against its figure
+    /// today, and say "No change" when the answer is that nobody notices.
     private var projectedImpactEstimates: [(label: String, value: String, icon: String, color: Color)] {
-        let leagueAvg = 65.0
         var items: [(label: String, value: String, icon: String, color: Color)] = []
 
-        let positionCoaches: Set<CoachRole> = [.qbCoach, .rbCoach, .wrCoach, .olCoach, .dlCoach, .lbCoach, .dbCoach]
-        let coordinators: Set<CoachRole> = [.offensiveCoordinator, .defensiveCoordinator, .specialTeamsCoordinator]
-        let topRoles: Set<CoachRole> = [.headCoach, .assistantHeadCoach]
+        func pct(_ value: Double) -> String {
+            "\(value >= 0 ? "+" : "")\(String(format: "%.1f", value))%"
+        }
+        let devIcon = "chart.line.uptrend.xyaxis"
 
-        if positionCoaches.contains(candidate.role) {
-            // +X% position development (conservative 0.5–3% range).
-            let dev = Double(candidate.playerDevelopment)
-            let pct = max(-3.0, min(3.0, (dev - leagueAvg) * 0.05))
-            let group = candidate.role.displayName.replacingOccurrences(of: "Coach", with: "").trimmingCharacters(in: .whitespaces)
+        switch candidate.role {
+        case .headCoach:
+            // Mech 4 — the head coach sets the discipline that scales this
+            // club's own penalty AND fumble frequencies. Mirrors
+            // `CoachingModifiers.disciplineScale`, which is private.
+            let scale = min(CoachingModifiers.disciplineScaleMax,
+                            max(CoachingModifiers.disciplineScaleMin,
+                                1.0 - (Double(candidate.discipline) - CoachingModifiers.disciplineCenter)
+                                    * CoachingModifiers.disciplineSlope))
+            let penaltyPct = (scale - 1.0) * 100.0
             items.append((
-                label: "\(group) development",
-                value: "\(pct >= 0 ? "+" : "")\(String(format: "%.1f", pct))% / season",
-                icon: "chart.line.uptrend.xyaxis",
-                color: pct >= 0 ? .success : .danger
+                label: "Penalties & fumbles",
+                value: "\(penaltyPct >= 0 ? "+" : "")\(String(format: "%.0f", penaltyPct))%",
+                icon: "flag.fill",
+                color: penaltyPct <= 0 ? .success : .danger
             ))
-
-            let mot = Double(candidate.motivation)
-            let moralePct = max(-2.0, min(2.0, (mot - leagueAvg) * 0.03))
-            items.append((
-                label: "Player morale",
-                value: "\(moralePct >= 0 ? "+" : "")\(String(format: "%.1f", moralePct))%",
-                icon: "heart.fill",
-                color: moralePct >= 0 ? .success : .danger
-            ))
-        } else if coordinators.contains(candidate.role) {
-            let play = Double(candidate.playCalling)
-            let plan = Double(candidate.gamePlanning)
-            let efficiency = max(-3.0, min(3.0, ((play + plan) / 2.0 - leagueAvg) * 0.05))
-            let side = candidate.role == .offensiveCoordinator ? "offensive"
-                : candidate.role == .defensiveCoordinator ? "defensive" : "special teams"
-            items.append((
-                label: "\(side.capitalized) efficiency",
-                value: "\(efficiency >= 0 ? "+" : "")\(String(format: "%.1f", efficiency))%",
-                icon: "bolt.horizontal.fill",
-                color: efficiency >= 0 ? .success : .danger
-            ))
-
-            let dev = Double(candidate.playerDevelopment)
-            let devPct = max(-2.0, min(2.0, (dev - leagueAvg) * 0.03))
-            items.append((
-                label: "Unit development",
-                value: "\(devPct >= 0 ? "+" : "")\(String(format: "%.1f", devPct))% / season",
-                icon: "chart.line.uptrend.xyaxis",
-                color: devPct >= 0 ? .success : .danger
-            ))
-        } else if topRoles.contains(candidate.role) {
-            // #3087: what the sim ACTUALLY applies for this seat, read straight
-            // off `CoachingModifiers`, in place of the "Projected wins" figure
-            // that used to sit here.
-            //
-            // That figure was `clamp((ovr·0.5 + mot·0.25 + disc·0.25 - 65) ·
-            // 0.04, -2, 2)` — a display heuristic with no path into the engine.
-            // The engine's coaching terms are all PER-PLAY (completion
-            // probability, yards per carry, penalty frequency, pre-game morale),
-            // and turning any of them into wins needs a plays-per-season and a
-            // points-to-wins conversion this game does not have. Rather than
-            // invent one, the card quotes the levers themselves.
-            if candidate.role == .headCoach {
-                // Mech 4 — the head coach sets the discipline that scales this
-                // club's own penalty AND fumble frequencies. Mirrors
-                // `CoachingModifiers.disciplineScale`, which is private.
-                let scale = min(CoachingModifiers.disciplineScaleMax,
-                                max(CoachingModifiers.disciplineScaleMin,
-                                    1.0 - (Double(candidate.discipline) - CoachingModifiers.disciplineCenter)
-                                        * CoachingModifiers.disciplineSlope))
-                let penaltyPct = (scale - 1.0) * 100.0
-                items.append((
-                    label: "Penalties & fumbles",
-                    value: "\(penaltyPct >= 0 ? "+" : "")\(String(format: "%.0f", penaltyPct))%",
-                    icon: "flag.fill",
-                    color: penaltyPct <= 0 ? .success : .danger
-                ))
-            } else {
-                // Mech 2 — the assistant's game planning is a completion edge,
-                // but only while he is the sharpest planner on the staff:
-                // `CoachingModifiers.ratings` takes the max over HC/AHC/OC/DC.
-                let edge = min(CoachingModifiers.planCompletionCap,
-                               max(-CoachingModifiers.planCompletionCap,
-                                   (Double(candidate.gamePlanning) - CoachingModifiers.planCenter)
-                                       * CoachingModifiers.planCompletionSlope))
-                let pts = edge * 100.0
-                items.append((
-                    label: "Game-plan edge",
-                    value: "\(pts >= 0 ? "+" : "")\(String(format: "%.1f", pts)) pts completion",
-                    icon: "doc.text.fill",
-                    color: pts >= 0 ? .success : .danger
-                ))
-            }
-
-            // Mech 3/5 — the pre-game morale bump, in points of morale.
-            // Morale influence is taken from the best man on the staff and
-            // motivation is the head coach's lever alone, so this is what the
-            // candidate contributes when he is that man.
-            var bump = (Double(candidate.moraleInfluence) - CoachingModifiers.moraleCenter)
-                * CoachingModifiers.moraleInfluenceSlope
-            if candidate.role == .headCoach {
-                bump += (Double(candidate.motivation) - CoachingModifiers.moraleCenter)
-                    * CoachingModifiers.motivationSlope
-            }
-            let morale = Int(min(CoachingModifiers.moraleBumpCap,
-                                 max(-CoachingModifiers.moraleBumpCap, bump)).rounded())
-            items.append((
-                label: "Pre-game morale",
-                value: "\(morale >= 0 ? "+" : "")\(morale) pts",
-                icon: "heart.fill",
-                color: morale >= 0 ? .success : .danger
-            ))
-
-            let dev = Double(candidate.playerDevelopment)
-            let devPct = max(-2.0, min(2.0, (dev - leagueAvg) * 0.03))
-            items.append((
-                label: "Roster-wide dev",
-                value: "\(devPct >= 0 ? "+" : "")\(String(format: "%.1f", devPct))% / season",
-                icon: "chart.line.uptrend.xyaxis",
-                color: devPct >= 0 ? .success : .danger
-            ))
-
-            let media = Double(candidate.mediaHandling)
-            let repPct = max(-2.0, min(2.0, (media - leagueAvg) * 0.03))
-            items.append((
-                label: "Team reputation",
-                value: "\(repPct >= 0 ? "+" : "")\(String(format: "%.1f", repPct))%",
-                icon: "star.fill",
-                color: repPct >= 0 ? .success : .danger
-            ))
-        } else {
-            // Strength / medical / etc.
-            let dev = Double(candidate.playerDevelopment)
-            let pct = max(-2.0, min(2.0, (dev - leagueAvg) * 0.04))
+            // Layer 1 of the development hierarchy — and it reads `motivation`.
+            // The line here used to read `playerDevelopment`, which no layer of
+            // that function asks a head coach for.
+            let devPct = developmentPct(candidate.motivation, layer: Self.hcDevelopmentLayer)
             items.append((
                 label: "Roster development",
-                value: "\(pct >= 0 ? "+" : "")\(String(format: "%.1f", pct))% / season",
-                icon: "chart.line.uptrend.xyaxis",
-                color: pct >= 0 ? .success : .danger
+                value: "\(pct(devPct)) / season",
+                icon: devIcon,
+                color: devPct >= 0 ? .success : .danger
             ))
+            items.append(moraleImpact)
+
+        case .assistantHeadCoach:
+            items.append(gamePlanImpact)
+            let devPct = developmentPct(candidate.playerDevelopment, layer: Self.ahcDevelopmentLayer)
+            items.append((
+                label: "Roster development",
+                value: "\(pct(devPct)) / season",
+                icon: devIcon,
+                color: devPct >= 0 ? .success : .danger
+            ))
+            items.append(moraleImpact)
+
+        case .offensiveCoordinator, .defensiveCoordinator:
+            // Mech 1 — the grade the sim reads is the average of play-calling
+            // and adaptability, and the OC pays it into his own offense's
+            // completion probability while the DC takes it out of the
+            // opponent's. Same magnitude, opposite direction on screen.
+            let grade = Double(candidate.playCalling + candidate.adaptability) / 2.0
+            let shift = min(CoachingModifiers.coordCompletionCap,
+                            max(-CoachingModifiers.coordCompletionCap,
+                                (grade - CoachingModifiers.coordinatorCenter)
+                                    * CoachingModifiers.coordCompletionSlope)) * 100.0
+            let isOffense = candidate.role == .offensiveCoordinator
+            let shown = isOffense ? shift : -shift
+            items.append((
+                label: isOffense ? "Completion rate" : "Opponent completion",
+                value: "\(shown >= 0 ? "+" : "")\(String(format: "%.1f", shown)) pts",
+                icon: "bolt.horizontal.fill",
+                color: shift >= 0 ? .success : .danger
+            ))
+            let devPct = developmentPct(candidate.playerDevelopment, layer: Self.coordinatorDevelopmentLayer)
+            items.append((
+                label: "Unit development",
+                value: "\(pct(devPct)) / season",
+                icon: devIcon,
+                color: devPct >= 0 ? .success : .danger
+            ))
+            items.append(gamePlanImpact)
+
+        case .specialTeamsCoordinator:
+            // He is the coordinator layer for a kicker or punter —
+            // `PlayerDevelopmentEngine` picks the coordinator by the player's
+            // side of the ball. Neither Mech 1 nor Mech 2 reads him at all,
+            // which is why there is no completion line here: the "special teams
+            // efficiency" percentage that used to sit in this branch was the
+            // invented one.
+            let devPct = developmentPct(candidate.playerDevelopment, layer: Self.coordinatorDevelopmentLayer)
+            items.append((
+                label: "K & P development",
+                value: "\(pct(devPct)) / season",
+                icon: devIcon,
+                color: devPct >= 0 ? .success : .danger
+            ))
+            items.append(moraleImpact)
+
+        case .qbCoach, .rbCoach, .wrCoach, .olCoach, .dlCoach, .lbCoach, .dbCoach:
+            let group = candidate.role.displayName
+                .replacingOccurrences(of: "Coach", with: "")
+                .trimmingCharacters(in: .whitespaces)
+            let devPct = developmentPct(candidate.playerDevelopment, layer: Self.positionDevelopmentLayer)
+            items.append((
+                label: "\(group) development",
+                value: "\(pct(devPct)) / season",
+                icon: devIcon,
+                color: devPct >= 0 ? .success : .danger
+            ))
+            items.append(moraleImpact)
+
+        case .strengthCoach:
+            // `WeekAdvancer.computeRecoveryRate` maps his `playerDevelopment`
+            // onto a camp recovery rate of 0.40...0.75. A club with no strength
+            // coach and no physio sits at 0.55, so that is the baseline this is
+            // measured against.
+            let rating = Double(max(1, min(99, candidate.playerDevelopment)))
+            let rate = 0.40 + (rating - 1.0) / 98.0 * 0.35
+            let campPct = (rate / 0.55 - 1.0) * 100.0
+            items.append((
+                label: "Camp recovery",
+                value: pct(campPct),
+                icon: "figure.strengthtraining.traditional",
+                color: campPct >= 0 ? .success : .danger
+            ))
+            items.append(moraleImpact)
+
+        case .teamDoctor:
+            // `MedicalEngine.injuryCheck` scales risk by 1 - pd/330 and
+            // `recoveryWeeks` by 1 - pd/660.
+            let riskPct = -Double(candidate.playerDevelopment) / 330.0 * 100.0
+            items.append((
+                label: "Injury risk",
+                value: pct(riskPct),
+                icon: "cross.case.fill",
+                color: riskPct <= 0 ? .success : .danger
+            ))
+            let recoveryPct = -Double(candidate.playerDevelopment) / 660.0 * 100.0
+            items.append((
+                label: "Recovery time",
+                value: pct(recoveryPct),
+                icon: "bandage.fill",
+                color: recoveryPct <= 0 ? .success : .danger
+            ))
+            items.append(moraleImpact)
+
+        case .physio:
+            // `MedicalEngine.recoveryWeeks` takes pd/400 off the prognosis, and
+            // `weeklyFatigueRecovery` adds pd/10 to the base 15 points a week.
+            let recoveryPct = -Double(candidate.playerDevelopment) / 400.0 * 100.0
+            items.append((
+                label: "Injury recovery time",
+                value: pct(recoveryPct),
+                icon: "bandage.fill",
+                color: recoveryPct <= 0 ? .success : .danger
+            ))
+            let fatigue = Int(Double(candidate.playerDevelopment) / 10.0)
+            items.append((
+                label: "Fatigue recovery",
+                value: "+\(fatigue) pts / week",
+                icon: "bolt.heart.fill",
+                color: fatigue > 0 ? .success : .textTertiary
+            ))
+            items.append(moraleImpact)
+
+        case .headTrainer:
+            // `MedicalEngine.processWeeklyRehab` rolls a setback at
+            // max(0.02, 0.10 - pd * 0.0006), against the 10% a club with no
+            // trainer rolls.
+            let setback = max(0.02, 0.10 - Double(candidate.playerDevelopment) * 0.0006)
+            let setbackPct = (setback / 0.10 - 1.0) * 100.0
+            items.append((
+                label: "Rehab setbacks",
+                value: pct(setbackPct),
+                icon: "arrow.triangle.2.circlepath",
+                color: setbackPct <= 0 ? .success : .danger
+            ))
+            items.append(moraleImpact)
         }
 
         return Array(items.prefix(3))
@@ -2024,7 +2245,12 @@ private struct CandidateDetailSheet: View {
                 }
             }
 
-            Text("Estimates based on attribute deltas vs. league average.")
+            // The footnote used to say "attribute deltas vs. league average",
+            // which was true of the invented percentages and is not true of
+            // these: every line is the sim's own coefficient, and the two the
+            // sim takes as a max over the staff are measured against the men
+            // already in the building — which is what "No change" means.
+            Text("Read off the sim's own coaching effects, against the staff you already have.")
                 .font(.system(size: DSType.Size.caption, weight: .medium))
                 .foregroundStyle(Color.textTertiary)
         }
