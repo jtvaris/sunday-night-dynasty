@@ -21,13 +21,19 @@ import Foundation
 //      because a guard rail is a tail question.
 //   2. The same distribution from `GameSimulator.simulate` on the same rosters,
 //      as the reference. `LiveGameEngine`'s own header claims a fully-AI live
-//      game is statistically identical to the quick sim; that claim is now a
-//      gate instead of a comment.
+//      game is statistically identical to the quick sim WITH ONE DELIBERATE
+//      EXCEPTION — live games roll per-play injuries, and the quick sim rolls
+//      the same aggregate chance once a week in `WeekAdvancer`, which this rig
+//      never runs. That claim, exception included, is now a gate instead of a
+//      comment.
 //   3. A prep-boost SWEEP that walks the requested boosts past their clamp.
-//      The scenario never re-types 0.20 / 0.15 — it asks for more than that and
-//      measures whether the scoring stops moving, which is what a binding clamp
-//      looks like from outside. (sync_sources.sh §10c separately fails the build
-//      if either clamp line leaves the repo.)
+//      The `max` row asks for the shipped ceiling and the `over` row for double
+//      it; both requests are typed out below, mirroring the clamp by hand. What
+//      is MEASURED is whether the scoring stops moving between the two, which is
+//      what a binding clamp looks like from outside and does not depend on
+//      either literal still matching the engine. (sync_sources.sh §10c fails the
+//      build if either clamp line leaves the repo, so a ceiling that moved is
+//      caught there rather than here.)
 //
 // EVERY ENGINE NUMBER IS A REPO BYTE. `LiveGameEngineExtract.swift` is the
 // shipped file minus its post-whistle SwiftData write-back; the clamps, the
@@ -41,10 +47,21 @@ struct CoachedGameLine {
     var playerPts = 0
     /// Points scored by the AI opponent.
     var oppPts = 0
-    /// `LiveGameEngine.playLog.count` — how close the game came to the
-    /// 500-play safety cap in `simToEnd()`. Zero for a quick-sim reference row,
-    /// which has no play log of its own.
+    /// `LiveGameEngine.playLog.count` — the length of the broadcast feed, which
+    /// is NOT the `step()` count `simToEnd()` caps at 500. The log also carries
+    /// playNumber-0 feed-only lines (`appendSubstitutionFeedLine`,
+    /// `postFeedNote`) and takes two entries for a kickoff-return touchdown, so
+    /// it is an upper bound on the steps taken, never equal to them. `capHit` is
+    /// what answers the cap question. Zero for a quick-sim reference row, which
+    /// has no play log of its own.
     var loggedPlays = 0
+    /// True when `simToEnd()` left its loop on the 500-play safety cap rather
+    /// than on a real ending — i.e. the final score is a truncation artefact.
+    /// Every legitimate ending sets `isGameOver` with the clock at 0 in
+    /// regulation (`quarter >= 4`) or in sudden-death overtime (`quarter == 5`),
+    /// so a finished game still in `quarter <= 4` with time on the clock can
+    /// only have come out of the cap branch. False for a quick-sim reference row.
+    var capHit = false
     /// Final quarter reached; > 4 means the game went to overtime.
     var finalQuarter = 0
     /// Drives in the finished box score, both sides — the possession count that
@@ -52,9 +69,14 @@ struct CoachedGameLine {
     /// `BoxScore.drives`, which both paths assemble the same way
     /// (`GameSimulator.finalizeGameResult`).
     var drives = 0
-    /// Run + pass snaps across those drives (penalties excluded, as in
-    /// `teamLine`), so a possession-count difference can be told apart from a
-    /// longer-drive difference.
+    /// Run + pass snaps across those drives, so a possession-count difference
+    /// can be told apart from a longer-drive difference. Flagged snaps ARE
+    /// included: `PlayType` has no penalty case, so `PlaySimulator` stamps a
+    /// penalty with the play call that drew it (`.run` / `.pass`) and
+    /// `outcome == .penalty`. That makes this a WIDER count than `teamLine`'s
+    /// `plays` / `meanPlays`, which skips `outcome == .penalty` first — the two
+    /// are not comparable across scenarios. Within this one they are, because
+    /// `cgFillDrives` counts the coached and quick paths identically.
     var scrimmagePlays = 0
 
     var combined: Int { playerPts + oppPts }
@@ -76,6 +98,8 @@ struct CoachedGameCell {
     var combined: [Double] { lines.map { Double($0.combined) } }
     var margins: [Double] { lines.map { Double($0.absMargin) } }
     var maxLoggedPlays: Int { lines.map(\.loggedPlays).max() ?? 0 }
+    /// Games `simToEnd()` truncated on its 500-play safety cap.
+    var capHitGames: Int { lines.filter(\.capHit).count }
     var overtimeGames: Int { lines.filter { $0.finalQuarter > 4 }.count }
     var drives: [Double] { lines.map { Double($0.drives) } }
     var scrimmagePlays: [Double] { lines.map { Double($0.scrimmagePlays) } }
@@ -136,6 +160,10 @@ func cgPlayCoachedGame(
     line.playerPts = engine.homeScore
     line.oppPts = engine.awayScore
     line.loggedPlays = engine.playLog.count
+    // The cap branch is the only way out of `simToEnd()` that leaves a finished
+    // game short of a real ending, so this is the truncation signal itself, not
+    // a proxy for it.
+    line.capHit = engine.quarter <= 4 && engine.timeRemaining > 0
     line.finalQuarter = engine.quarter
     // `buildResult()` is the same `GameSimulator.finalizeGameResult` the quick
     // sim ends on, so the two paths' box scores are counted by one function.
@@ -154,8 +182,9 @@ func cgFillDrives(_ line: inout CoachedGameLine, drives: [DriveResult]) {
 }
 
 /// The quick-sim reference on the same rosters. `GameSimulator.simulate` has no
-/// play log and no prep boosts, so those two fields stay at their zero defaults
-/// and the report never prints a play count for a reference row.
+/// play log, no `simToEnd()` cap and no prep boosts, so `loggedPlays` / `capHit`
+/// stay at their defaults and the report never prints a play count or a cap
+/// figure for a reference row.
 func cgPlayQuickGame(homeSpec: RosterSpec, awaySpec: RosterSpec) -> CoachedGameLine {
     let (ht, hc, hp) = buildRoster(homeSpec, side: "H")
     let (at, ac, ap) = buildRoster(awaySpec, side: "A")
@@ -192,9 +221,11 @@ func scenarioCoachedGame(_ f: [String: String]) {
     let matchups: [(String, String)] = [
         ("avg", "avg"), ("good", "avg"), ("good", "weak"), ("elite", "weak")
     ]
-    // The sweep deliberately walks PAST the shipped ceiling. `over` asks for
-    // double the clamp on both boosts; if the clamp binds, `max` and `over`
-    // measure the same game.
+    // The sweep deliberately walks PAST the shipped ceiling. `max` mirrors the
+    // engine's clamp (0…0.20 / 0…0.15) by hand and `over` asks for double it;
+    // if the clamp binds, `max` and `over` measure the same game. The pair is
+    // what the gate reads — the two literals are a request, not a measurement,
+    // and sync_sources.sh §10c is what fails the build if the clamp itself moves.
     let prepSteps = [
         CoachedPrepStep(label: "none", requestedAudible: 0.00, requestedDefRead: 0.000),
         CoachedPrepStep(label: "half", requestedAudible: 0.10, requestedDefRead: 0.075),
@@ -293,15 +324,22 @@ func scenarioCoachedGame(_ f: [String: String]) {
     // D2. WHERE the coached path differs from the quick sim
     // ------------------------------------------------------------------------
     // `LiveGameEngine`'s header promises a nil-argument live game is
-    // statistically identical to `GameSimulator.simulate`, and `simToEnd()` is
-    // exactly such a game. This block exists so a gap in that promise can be
-    // ATTRIBUTED — more possessions, longer possessions, or more points out of
-    // each one — rather than merely noticed.
+    // statistically identical to `GameSimulator.simulate` with one deliberate
+    // exception, and `simToEnd()` is exactly such a game. The exception is
+    // injuries: live games roll them per play, the quick sim rolls the same
+    // aggregate chance once a week in `WeekAdvancer`. This rig runs no
+    // `WeekAdvancer`, so the reference column rolls NONE — part of any gap
+    // below is that missing precondition rather than a divergence. This block
+    // exists so the rest can be ATTRIBUTED — more possessions, longer
+    // possessions, or more points out of each one — rather than merely noticed.
     let coachedNoPrepCell = coachedByPrep["none"] ?? CoachedGameCell()
     print("")
     print("  --- PARITY CHECK: coached (no prep) vs quick sim, on identical roster specs ---")
     print("  LiveGameEngine's header claims a nil-argument live game is statistically identical to")
-    print("  GameSimulator.simulate. simToEnd() IS such a game, so any delta below is a real divergence.")
+    print("  GameSimulator.simulate WITH ONE DELIBERATE EXCEPTION: live games roll per-play injuries,")
+    print("  the quick sim rolls the same aggregate chance once a week in WeekAdvancer. simToEnd() IS")
+    print("  such a game, but this rig runs no WeekAdvancer — the quick column below rolls ZERO injuries")
+    print("  while the coached column rolls them per play, so that much of any delta is outside the claim.")
     print("  \(lrPad("", 24)) coached    quick    delta")
     func cgCompare(_ label: String, _ a: Double, _ b: Double) {
         print(String(format: "  %@ %7.2f  %7.2f  %+7.2f", lrPad(label, 24), a, b, a - b))
@@ -343,10 +381,11 @@ func scenarioCoachedGame(_ f: [String: String]) {
     // F. The safety cap in simToEnd()
     // ------------------------------------------------------------------------
     let maxPlays = coachedAll.maxLoggedPlays
+    let capHits = coachedAll.capHitGames
     let overtimes = coachedAll.overtimeGames
     print("")
-    print(String(format: "  --- simToEnd() safety cap: longest play log %d of the 500-play limit · %d overtime games (%.2f %%)",
-                 maxPlays, overtimes, lrShare(overtimes, coachedAll.lines.count)))
+    print(String(format: "  --- simToEnd() safety cap: %d of %d games truncated by the 500-play cap · longest broadcast feed %d entries (an upper bound on steps, not the step count) · %d overtime games (%.2f %%)",
+                 capHits, coachedAll.lines.count, maxPlays, overtimes, lrShare(overtimes, coachedAll.lines.count)))
 
     // ------------------------------------------------------------------------
     // Hard gates
@@ -364,31 +403,41 @@ func scenarioCoachedGame(_ f: [String: String]) {
 
     // CG-1: THE DEFECT THIS SCENARIO FOUND. `LiveGameEngine`'s own header
     // promises a nil-argument live game is statistically identical to
-    // `GameSimulator.simulate`, and `simToEnd()` is exactly such a game. It is
-    // not: the first run measured +6.85 points per team-game, all of it in
-    // points-per-drive (the coached path takes FEWER possessions). The gate
-    // records that divergence at 9.0 so it cannot grow unnoticed while the
-    // product call on it is outstanding — it is not an endorsement of 6.85.
+    // `GameSimulator.simulate` apart from per-play injuries, and `simToEnd()`
+    // is exactly such a game. It is not: the first run measured +6.85 points
+    // per team-game, all of it in points-per-drive (the coached path takes
+    // FEWER possessions), and repeat runs land in the same +6.7…+7.0 band. Part
+    // of that is the injury exception itself, since this rig runs no
+    // `WeekAdvancer` and the reference therefore rolls no injuries at all,
+    // which is one more reason the gate only RECORDS the divergence at 9.0 so
+    // it cannot grow unnoticed while the product call on it is outstanding —
+    // it is not an endorsement of 6.85.
     let parityGap = abs(meanD(coachedNoPrep.teamPts) - meanD(quickAll.teamPts))
     A.check("CG-1", parityGap <= 9.0,
         String(format: "coached-at-zero-prep per-team points %.2f vs quick sim %.2f — gap %.2f (<= 9.0)",
                meanD(coachedNoPrep.teamPts), meanD(quickAll.teamPts), parityGap)
-        + " — parity is what the engine's header claims; the first run measured a +6.85 divergence and this rail only stops it growing")
+        + " — the engine's header claims parity apart from live-only per-play injuries; the first run measured a +6.85 divergence and this rail only stops it growing")
 
-    // CG-2: the prep clamp binds. Asking for double the ceiling bought 0.12 of
-    // a point over asking for the ceiling — noise. This is the rail that keeps
-    // the clamp honest without this file ever naming 0.20 / 0.15.
+    // CG-2: the prep clamp binds — asking for double the `max` row's request
+    // buys nothing over asking for `max` itself. The rail is on the SATURATION,
+    // not on either literal: if the shipped ceiling moved, sync_sources.sh §10c
+    // fails the build before this gate runs. The gap is a difference of two
+    // unseeded means, so it needs the default n (200) or more to sit near zero;
+    // a tiny `--n` trips this on sampling noise alone, which is why no point
+    // estimate is quoted here.
     let clampGap = abs(meanD(coachedMax.teamPts) - meanD(coachedOver.teamPts))
     A.check("CG-2", clampGap <= 1.5,
-        String(format: "prep saturates: max-request %.2f vs double-the-clamp request %.2f — gap %.2f (<= 1.5; measured 0.12)",
+        String(format: "prep saturates: max-request %.2f vs double-the-clamp request %.2f — gap %.2f (<= 1.5)",
                meanD(coachedMax.teamPts), meanD(coachedOver.teamPts), clampGap))
 
-    // CG-3: prep is a nudge, not a cheat code. At the ceiling it moved the
-    // player's own scoring by -0.06 points per game, i.e. not at all.
+    // CG-3: prep is a nudge, not a cheat code. At the ceiling the player's own
+    // scoring barely moves. The lift is a difference of two unseeded means and
+    // lands either side of zero from run to run, so the claim is the 3.0 rail
+    // and the printed value, not any one run's point estimate.
     let prepLift = meanD(coachedMax.lines.map { Double($0.playerPts) })
         - meanD(coachedNoPrep.lines.map { Double($0.playerPts) })
     A.check("CG-3", prepLift <= 3.0,
-        String(format: "max prep buys the player %+.2f points per game (<= 3.0 — measured -0.06, so the boosts are not what makes a coached game high-scoring)", prepLift))
+        String(format: "max prep buys the player %+.2f points per game (<= 3.0 — the boosts are not what makes a coached game high-scoring)", prepLift))
 
     // CG-4: THE SCORING RAIL this item was opened for. 60-21 was the scoreline
     // that prompted it, so the rail is on the WINNER's score — the half a cap
@@ -410,9 +459,11 @@ func scenarioCoachedGame(_ f: [String: String]) {
 
     // CG-7: simToEnd()'s 500-play cap is a safety valve, not a game length. If
     // a real game ever reaches it the final score is a truncation artefact.
-    // The longest log measured was 195 plays.
-    A.check("CG-7", maxPlays < 500,
-        "longest coached play log \(maxPlays) plays (< 500 — the simToEnd safety cap never truncated a game; measured 195)")
+    // The gate reads `capHit` — the cap branch's own footprint — rather than
+    // the play-log length, which counts feed-only lines the cap does not.
+    A.check("CG-7", capHits == 0,
+        "\(capHits) of \(coachedAll.lines.count) coached games ended on the simToEnd 500-play cap "
+        + "(== 0 — no coached game was truncated; longest broadcast feed \(maxPlays) entries)")
 
     A.report()
     print(String(format: "\n  elapsed %.1fs", Date().timeIntervalSince(t0)))
