@@ -1,4 +1,7 @@
 import Foundation
+// `ObservableObject` and `@Published` are Combine, not Foundation — the store below
+// is both, and a Foundation-only import compiles everywhere except here.
+import Combine
 
 // MARK: - StaffTemplate
 //
