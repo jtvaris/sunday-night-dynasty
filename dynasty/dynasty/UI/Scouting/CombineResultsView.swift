@@ -1439,14 +1439,26 @@ struct CombineResultsView<Header: View>: View {
     /// drawn apart: "no reading" over a broadcast row said the man had not
     /// tested, when what had happened was that the club had not bought the
     /// precision a composite needs.
+    ///
+    /// The remedy is spoken only where the remedy EXISTS. The trip is a
+    /// one-phase offer — the hub passes `onSendScouts` solely inside `.combine`
+    /// and only while the club has not gone — and `headerBar` draws the CTA on
+    /// exactly that test, while the table itself stays readable through the pro
+    /// days and the draft. Speaking "send your scouts" from free agency onward
+    /// told a broadcast-only club to buy a trip that no longer exists, with no
+    /// control anywhere on the screen to buy it with. Gated on the same
+    /// optional the button is, so the sentence is drawn and spoken together;
+    /// past the window the label states the fact and stops, which is what the
+    /// fidelity chip already does.
     private func athleticismAccessibilityLabel(
         prospect: CollegeProspect,
         score: Int?,
         showsPercentile: Bool
     ) -> String {
         guard let score else {
-            return showsPercentile
-                ? "Athleticism, no reading"
+            if showsPercentile { return "Athleticism, no reading" }
+            return onSendScouts == nil
+                ? "Athleticism, not available on broadcast numbers"
                 : "Athleticism, not available on broadcast numbers. Send your scouts to the combine."
         }
         let phrase = ProspectMeasurableTier.label(for: score).text
