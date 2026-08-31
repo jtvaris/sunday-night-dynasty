@@ -960,6 +960,17 @@ enum LeagueGenerator {
         // he is worth); this supplies the LEVEL, and holding it here is what
         // keeps aggregate payroll where the #27/#53 economy calibration put it
         // no matter how the shape is re-derived.
+        //
+        // THIS LINE IS THE TEAM PICKER'S "CAP SPACE". `team.currentCapUsage` is
+        // the sum of the salaries this loop writes, and `TeamBrowseCatalog`
+        // `.generated(from:)` prints `salaryCap - currentCapUsage` on the club
+        // card the player chooses a franchise from. There is no team term in the
+        // draw and never has been: every club takes one independent uniform
+        // sample from the same band, so the figure carries no information about
+        // how the club has been run and two clubs' cap space cannot be compared
+        // as if it did. `TeamDetailSheet.statsRow` now says so on screen and
+        // derives the window it quotes from `rosterCapTargetBand` and
+        // `ContractEngine.openingSalaryCap` rather than restating it.
         let targetCap = Int.random(in: rosterCapTargetBand)
         let currentTotal = players.reduce(0) { $0 + $1.annualSalary }
 
@@ -2105,6 +2116,16 @@ enum LeagueGenerator {
     /// Opening payroll a generated roster is normalised onto, in thousands —
     /// 80-95 % of ``ContractEngine/openingSalaryCap``. `LeagueTemplateImporter`
     /// draws from this same band (on its own seed stream) for the fixed league.
+    ///
+    /// The complement of this band IS the team picker's Cap Space column: a
+    /// club's opening room is `openingSalaryCap` minus one uniform draw from
+    /// here, i.e. 5-20 % of the cap, independently per club and with no team
+    /// term anywhere in it. Anything that reads the figure as a franchise
+    /// characteristic — sorting the picker by it, comparing two clubs on it —
+    /// is reading a die roll. That is a statement about what the number means,
+    /// not a defect to tune away: the band exists to hold aggregate payroll on
+    /// the #27/#53 calibration, which is a league-level job, and the screens
+    /// that print it are the ones that owe the player the caveat.
     static let rosterCapTargetBand: ClosedRange<Int> = (ContractEngine.openingSalaryCap * 80 / 100)...(ContractEngine.openingSalaryCap * 95 / 100)
 
     /// How long a rookie contract runs, in league years. Every drafted player is

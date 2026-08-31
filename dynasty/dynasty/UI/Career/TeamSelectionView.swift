@@ -324,7 +324,8 @@ struct TeamSelectionView: View {
                         coachingStyle: coachingStyle,
                         setupSummary: setupSummary,
                         selectTitle: gameMode == .fantasyDraft ? "START FANTASY DRAFT" : "SELECT THIS TEAM",
-                        gameMode: gameMode
+                        gameMode: gameMode,
+                        scenario: scenario
                     ) {
                         activeCover = nil
                         startCareer(with: team)
@@ -803,6 +804,50 @@ struct TeamSelectionView: View {
     /// where the block falls: the generation wait moves to the front of the
     /// screen, behind a spinner the player is already expecting, and what is
     /// left after the tap is the insert into the store, which was always there.
+    ///
+    /// ## How long it blocks for
+    ///
+    /// Measured rather than guessed, and measured on the SHIPPED functions
+    /// rather than on a mirror of them: the three calls below were compiled out
+    /// of this repo's own sources with `swiftc -O` into a command-line binary
+    /// and run 15 times, on an 18-core Apple-silicon Mac, main-actor isolated
+    /// exactly as here.
+    ///
+    /// | Call | p50 | range |
+    /// |---|---|---|
+    /// | `LeagueGenerator.generate` | 249 ms | 241-257 |
+    /// | `LeagueGenerator.syntheticCareerHistory` | 51 ms | 49-52 |
+    /// | `TeamBrowseCatalog.generated(from:)` | 90 ms | 88-92 |
+    /// | **total, actor held** | **390 ms** | 380-398 |
+    ///
+    /// The first iteration in a cold process measured 380 ms, so there is no
+    /// warm-up term to discount.
+    ///
+    /// **That is a Mac number and the app does not run on a Mac.** A device
+    /// core is materially slower than a desktop one, so read 390 ms as a floor
+    /// for iPhone/iPad rather than as the figure. The `PerfLog.time` calls in
+    /// the body print the real one — `PERF|career_new_generateLeague|<ms>` on
+    /// the console of a DEBUG build — and that is the number to trust when
+    /// somebody has a device in hand.
+    ///
+    /// ## Whether that is acceptable
+    ///
+    /// The duration is: it is a single wait at the front of a screen the player
+    /// has just navigated to, it is announced ("Generating League..."), it is
+    /// paid exactly once per career, and it was always being paid — the
+    /// refactor moved it from after the tap to before the list, it did not add
+    /// it.
+    ///
+    /// The PRESENTATION of it is not, and this is the part worth fixing.
+    /// Holding the main actor for 390 ms means the `ProgressView` in the
+    /// overlay above does not animate for the whole of it: `Task.yield()` buys
+    /// one frame — enough to get the overlay on screen — and then the spinner
+    /// is frozen until the actor comes back. A stationary spinner reads as a
+    /// hang, which is worse than a longer wait that visibly moves. The fix is
+    /// the same one the doc above defers (get the generator off the main actor,
+    /// which means `nonisolated` across the model layer) or a determinate
+    /// progress bar the generator can tick, which needs the generator to report
+    /// progress — both changes outside these files.
     private func buildGeneratedLeague() async {
         guard prepared == nil else { return }
         isBuildingLeague = true
@@ -953,6 +998,18 @@ struct TeamSelectionView: View {
 
         // R40 — scenario starts re-parametrize the generated league (roster
         // strength, owner traits, pick ownership, cap sheet) before insertion.
+        //
+        // THE ONE THING THIS SCREEN STILL CHANGES AFTER THE TAP, and the reason
+        // `rosterPromisesHold` is false for a scenario. It does not roll a
+        // second league — the assert above is what guarantees that, and it
+        // holds for scenarios too — but it edits the chosen club inside the
+        // league the picker was showing, which moves Roster OVR, Cap Space,
+        // Draft Picks, the quarterback's rating, the star ratings, the room
+        // grades and owner patience. It cannot be hoisted in front of the
+        // picker, because "the chosen club" is what the tap decides. So the
+        // sheet states the edits instead: `TeamDetailSheet.scenarioRewriteCard`
+        // lists them for the club being opened, and `NewCareerView`'s scenario
+        // cards carry the timing one screen earlier.
         if let scenario, let chosenTeam, let owner = chosenTeam.owner {
             CareerScenarioApplier.apply(
                 scenario,
@@ -1596,6 +1653,15 @@ private struct TeamDetailSheet: View {
     /// that describe *this club's players* are suppressed for it — see
     /// `rosterPromisesHold`.
     var gameMode: CareerGameMode = .standard
+    /// The scenario the career will start in, or `nil` for a plain career.
+    ///
+    /// It has to reach this sheet, and it did not. `CareerSetup.mode` returns
+    /// `.standard` for all three scenario cards — `scenario` is the *other*
+    /// half of the pair, and only `gameMode` was being passed down. So the
+    /// sheet believed a Rebuild start was a plain Standard start, and stated
+    /// this club's roster as settled fact when `CareerScenarioApplier` was
+    /// about to rewrite it. See `rosterPromisesHold`.
+    var scenario: CareerScenario? = nil
     let onSelect: () -> Void
 
     @Environment(\.dismiss) private var dismiss
@@ -1779,6 +1845,21 @@ private struct TeamDetailSheet: View {
 
     // MARK: - Difficulty + Situation
 
+    /// Where the two labels above this line come from, in the player's words.
+    ///
+    /// The sheet now mixes two kinds of fact on one card and had no way to tell
+    /// them apart: `Roster OVR`, `Draft Picks`, the quarterback, the stars and
+    /// the room grades are all read off a roster that exists, while these two —
+    /// and owner patience, market copy, prestige, the coaching budget and last
+    /// season's record with them — are authored per club in `LeagueTeamData`
+    /// on the random league. Both readings are legitimate; presenting them in
+    /// the same voice is not.
+    private var difficultyProvenance: String {
+        catalog.source.isTemplate
+            ? String(localized: "Worked out from this club's roster against the league average, last season's record, and how patient the owner is.")
+            : String(localized: "Authored labels for the franchise, not readings of this roster: they are the same for this club in every random league, however the roster below turns out.")
+    }
+
     private var difficultySituationRow: some View {
         VStack(spacing: 8) {
             HStack(spacing: 24) {
@@ -1812,11 +1893,24 @@ private struct TeamDetailSheet: View {
                     )
             }
 
-            // One-line rationale so "Easy"/"Hard" isn't an unexplained verdict (audit).
-            Text("Difficulty weighs roster talent, cap room, and draft capital.")
+            // One-line rationale so "Easy"/"Hard" isn't an unexplained verdict
+            // (audit) — and, since the derivation wave, so the player can tell
+            // these two apart from the three measured numbers under them.
+            //
+            // The sentence this replaces said "Difficulty weighs roster talent,
+            // cap room, and draft capital." That was true of neither source.
+            // Nothing weighs cap room or draft capital anywhere: on a template
+            // `TeamBrowseCatalog.difficulty(patience:strength:leagueMean:wins:)`
+            // starts from the owner-patience tier and adds a star for a roster
+            // 2+ OVR above the league mean and a star for 12+ wins, and on the
+            // random league there is no derivation at all — the value is the
+            // authored `LeagueTeamData.previews[abbr].difficulty` integer, the
+            // same one for this club in every league the generator ever rolls.
+            Text(difficultyProvenance)
                 .font(DSType.text(DSType.Size.caption, .regular, prose: true))
                 .foregroundStyle(Color.textTertiary)
                 .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
 
             // Who the club is for, not just how hard it is.
             if let recommendation = experienceRecommendation {
@@ -1878,6 +1972,25 @@ private struct TeamDetailSheet: View {
                 .font(DSType.text(DSType.Size.caption, .regular, prose: true))
                 .foregroundStyle(Color.textTertiary)
                 .multilineTextAlignment(.center)
+
+            // Found while tracing the scenario blocker, and it is the same
+            // defect: the tier word and the season count are `LeagueTeamData`'s
+            // authored franchise reputation, and the number the engine actually
+            // fires you on is not derived from them on EITHER league source.
+            // `LeagueGenerator.generateOwner` deals `owner.patience` with
+            // `Int.random(in: 2...9)` (the template importer calls the same
+            // function on its own seed), and `owner.patience` is what
+            // `OwnerSatisfactionEngine` reads — once to scale every negative
+            // satisfaction swing and again for the two firing thresholds. So
+            // the card's ladder describes the club, not the man in the box.
+            //
+            // Stated rather than fixed: making the draw follow the authored tier
+            // would move every club's firing threshold, which is a balance
+            // change and not this wave's to make. See the report's `followUp`.
+            DSDetailNote(
+                text: String(localized: "The tier and the season count are the franchise's reputation, not this owner's own numbers — every owner in the league is dealt his patience when the league is built, and that hidden figure is what the firing check reads."),
+                icon: "dice"
+            )
         }
         .padding(16)
         .frame(maxWidth: .infinity)
@@ -1975,33 +2088,83 @@ private struct TeamDetailSheet: View {
         )
     }
 
+    /// The window a club's opening cap space can land in — in whole millions,
+    /// and as the share of the cap its payroll is drawn from — derived from the
+    /// two constants that actually decide it.
+    ///
+    /// Nothing here is typed out: `ContractEngine.openingSalaryCap` and
+    /// `LeagueGenerator.rosterCapTargetBand` are the pair
+    /// `LeagueGenerator.generateRoster` normalises every payroll onto, and
+    /// reading them is what stops the sentence below from going stale the day
+    /// either one is retuned — the failure this project keeps shipping is copy
+    /// that quotes a constant somebody has since moved. The $750K minimum
+    /// salary floor can lift a club's final payroll a little above its target,
+    /// so the real low end is at or just under `low`.
+    private static var capSpaceBand: (low: Int, high: Int, payrollLowPct: Int, payrollHighPct: Int) {
+        let cap = ContractEngine.openingSalaryCap
+        let payroll = LeagueGenerator.rosterCapTargetBand
+        return (
+            (cap - payroll.upperBound) / 1_000,
+            (cap - payroll.lowerBound) / 1_000,
+            payroll.lowerBound * 100 / cap,
+            payroll.upperBound * 100 / cap
+        )
+    }
+
+    /// The three headline numbers, and — new — where each of them comes from.
+    ///
+    /// Two of them are readings and the third is a die roll, and until now the
+    /// card set all three in the same weight on the same row. `Roster OVR` is
+    /// `RosterStrength.starterAverage` over the finished roster and
+    /// `Draft Picks` is a count of real `DraftPick` rows, but `Cap Space` is
+    /// the tail of `LeagueGenerator.generateRoster`'s last step: it scales the
+    /// whole payroll onto `Int.random(in: rosterCapTargetBand)`, a fresh
+    /// uniform draw per club with no team term in it at all. (The fixed
+    /// templates are the same draw — `LeagueTemplateImporter.capTarget` reads
+    /// the same band, seeded off the template's `globalSeed`, so it is stable
+    /// per club rather than meaningful.) A player sorting the picker by Cap
+    /// Space is sorting 32 dice, and nothing on the screen said so.
     private var statsRow: some View {
         let league = leagueAverages
-        return HStack(spacing: 0) {
-            detailStat(
-                icon: "chart.bar.fill",
-                label: "Roster OVR",
-                value: "\(preview.estimatedOVR)",
-                valueColor: Color.forRating(preview.estimatedOVR),
-                anchor: "League \(league.ovr)"
+        let band = Self.capSpaceBand
+        return VStack(spacing: DSSpacing.xs) {
+            HStack(spacing: 0) {
+                detailStat(
+                    icon: "chart.bar.fill",
+                    label: "Roster OVR",
+                    value: "\(preview.estimatedOVR)",
+                    valueColor: Color.forRating(preview.estimatedOVR),
+                    anchor: "League \(league.ovr)"
+                )
+                detailStat(
+                    icon: "dollarsign.circle.fill",
+                    label: "Cap Space",
+                    value: "$\(preview.estimatedCapSpace)M",
+                    valueColor: preview.estimatedCapSpace > 30 ? .success : preview.estimatedCapSpace > 15 ? .accentBlue : .warning,
+                    anchor: "League $\(league.capSpace)M"
+                )
+                detailStat(
+                    icon: "doc.text.fill",
+                    label: "Draft Picks",
+                    value: "\(preview.estimatedDraftPicks)",
+                    // Middle band is accent blue, matching cap space — picks used to
+                    // fall through to plain white, which read as "no opinion" beside
+                    // two coloured figures on the same card.
+                    valueColor: preview.estimatedDraftPicks >= 9 ? .success : preview.estimatedDraftPicks >= 7 ? .accentBlue : .warning,
+                    anchor: "League \(league.draftPicks)"
+                )
+            }
+
+            DSDetailNote(
+                text: String(
+                    format: String(localized: "Roster OVR and Draft Picks are read off this league's own rosters and pick board. Cap Space is not a franchise fact: each club's opening payroll is drawn at random from %d-%d %% of the $%dM cap, so the figure lands somewhere between $%dM and $%dM and says nothing about how the club has been run."),
+                    band.payrollLowPct, band.payrollHighPct,
+                    ContractEngine.openingSalaryCap / 1_000,
+                    band.low, band.high
+                ),
+                icon: "dice"
             )
-            detailStat(
-                icon: "dollarsign.circle.fill",
-                label: "Cap Space",
-                value: "$\(preview.estimatedCapSpace)M",
-                valueColor: preview.estimatedCapSpace > 30 ? .success : preview.estimatedCapSpace > 15 ? .accentBlue : .warning,
-                anchor: "League $\(league.capSpace)M"
-            )
-            detailStat(
-                icon: "doc.text.fill",
-                label: "Draft Picks",
-                value: "\(preview.estimatedDraftPicks)",
-                // Middle band is accent blue, matching cap space — picks used to
-                // fall through to plain white, which read as "no opinion" beside
-                // two coloured figures on the same card.
-                valueColor: preview.estimatedDraftPicks >= 9 ? .success : preview.estimatedDraftPicks >= 7 ? .accentBlue : .warning,
-                anchor: "League \(league.draftPicks)"
-            )
+            .padding(.horizontal, DSSpacing.md)
         }
         .padding(.vertical, 14)
         .cardBackground()
@@ -2013,7 +2176,8 @@ private struct TeamDetailSheet: View {
     /// quarterback, the key players and the strongest/weakest room — still
     /// describe the league the player is about to start.
     ///
-    /// They do in Standard, and they no longer do it by keeping a promise. The
+    /// They do in a plain Standard start — no scenario, no fantasy draft — and
+    /// they no longer do it by keeping a promise. The
     /// three cards used to state authored values that `LeagueGenerator`
     /// `.generateRoster` then worked to make true — pinning the named men to
     /// their targets and running a capped repair loop until the strongest and
@@ -2021,8 +2185,9 @@ private struct TeamDetailSheet: View {
     /// sheet is drawn, so `TeamBrowseCatalog.generated(from:)` reads all three
     /// straight off the finished roster: the quarterback is the man Auto-Set
     /// will start, the names are the three best players on the books, and the
-    /// rooms are graded with the same call the roster screen grades with. There
-    /// is nothing left to keep.
+    /// rooms are graded with the same call the roster screen grades with. On
+    /// that path there is nothing left to keep — and ONLY on that path, which
+    /// is the correction the next two sections make.
     ///
     /// They still do not hold in Fantasy Draft. Confirming this sheet in that
     /// mode hands every player in the league to `FantasyDraftEngine`, which
@@ -2030,20 +2195,166 @@ private struct TeamDetailSheet: View {
     /// the named quarterback will very likely be somebody else's, and the room
     /// the card calls strongest is decided at the draft board, not here.
     ///
+    /// They do not hold in a SCENARIO start either, and the earlier draft of
+    /// this comment said they did.
+    ///
+    /// The claim it made — "there is nothing left to keep" — was written from
+    /// `gameMode` alone, and `CareerSetup.mode` returns `.standard` for Rebuild,
+    /// Win Now and Cap Hell (only `CareerSetup.scenario` tells them apart). So
+    /// the flag read `true` for all three and the sheet stated this club's
+    /// quarterback, stars, rooms, OVR, cap space and pick count as settled.
+    ///
+    /// To be exact about what actually happens, because the report that raised
+    /// this said a second league is generated after the tap and that is NOT
+    /// what the code does: `startCareer` rolls nothing on the random path. It
+    /// takes `prepared.result` — the league this sheet has been reading since
+    /// `.task` — and the `#if DEBUG` tripwire beside it asserts the persisted
+    /// `leagueID` is that league's. What it then does, for a scenario only, is
+    /// call `CareerScenarioApplier.apply` on THIS ONE CLUB in that same league:
+    ///
+    /// * Rebuild — `shiftAttributes(of:by: -8)` on every man on the roster
+    ///   (clamped 25...99), plus one extra pick in each of rounds 1-3 of the
+    ///   upcoming draft taken from three other clubs.
+    /// * Win Now — `+5` on the top 15 by `overall`, `+2...3` years of age on
+    ///   the top 10, and this club's own round-1 and round-2 picks shipped out.
+    /// * Cap Hell — `+3` on the top 12, every salary scaled until payroll is
+    ///   105-108 % of the cap, and the ten biggest deals extended to 3-4 years.
+    ///
+    /// Every one of those moves a figure this sheet prints. So the cards are
+    /// not suppressed — the roster they describe is real, it is this club's,
+    /// and it is what the scenario is applied TO — but they are stamped
+    /// "before the scenario" by `scenarioRewriteCard`, which states the three
+    /// bullets above on screen. `NewCareerView`'s scenario cards say the same
+    /// thing one screen earlier, where the choice is actually made.
+    ///
+    /// Bringing scenarios fully under the refactor is not possible on this
+    /// screen: a scenario re-parametrizes the CHOSEN club, and which club that
+    /// is, is the one thing the tap decides. Applying it to all 32 before the
+    /// tap would be a different league, not an earlier one.
+    ///
     /// Everything else on the sheet is a fact about the FRANCHISE — market,
     /// owner, budget, division, last season's record — and survives either way.
-    private var rosterPromisesHold: Bool { gameMode != .fantasyDraft }
+    /// (Owner patience is the exception a scenario also rewrites, and
+    /// `scenarioRewriteCard` says so.)
+    private var rosterPromisesHold: Bool { rosterSurvivesConfirmation && scenario == nil }
 
-    /// The three roster-promise cards, or nothing at all in a mode that is
-    /// about to re-draft them. The sheet already names the mode in
-    /// `setupSummary` directly above the confirm button, so their absence reads
-    /// as "not decided yet" rather than as missing data.
+    /// Whether this club's generated players are still on this club's books
+    /// after the tap. False only in Fantasy Draft, which empties all 32.
+    ///
+    /// Kept apart from `rosterPromisesHold` because the two questions have
+    /// different answers for a scenario: the roster survives (so the cards are
+    /// worth showing, and are what the scenario is applied to) but the figures
+    /// on it do not (so they cannot be stated bare).
+    private var rosterSurvivesConfirmation: Bool { gameMode != .fantasyDraft }
+
+    /// The three roster cards, or nothing at all in a mode that is about to
+    /// re-draft them. The sheet already names the mode in `setupSummary`
+    /// directly above the confirm button, so their absence reads as "not
+    /// decided yet" rather than as missing data.
+    ///
+    /// A scenario keeps all three and gains a header that says what is about to
+    /// be done to them.
     @ViewBuilder
     private var rosterPromiseCards: some View {
-        if rosterPromisesHold {
+        if rosterSurvivesConfirmation {
+            scenarioRewriteCard
             startingQBCard
             keyPlayersCard
             groupStrengthCard
+        }
+    }
+
+    // MARK: - Scenario Rewrite
+
+    /// What the chosen scenario does to THIS club the moment the sheet is
+    /// confirmed — the sentence the doc comment above owed the player.
+    ///
+    /// Every line is one operation in `CareerScenarioApplier`, quoted rather
+    /// than characterised, so the card cannot drift from the code the way the
+    /// "nothing left to keep" comment did. Nothing here is a projection: it
+    /// does not say what the OVR becomes, because the sheet would have to
+    /// re-derive `RosterStrength.starterAverage` over a roster that has not
+    /// been shifted yet to know, and a re-derivation is exactly the kind of
+    /// second answer this screen exists to remove.
+    ///
+    /// Built on `!rosterPromisesHold` rather than on `scenario != nil` even
+    /// though the two are the same test inside `rosterPromiseCards`: the flag
+    /// is the claim, and tying the disclosure to the flag is what stops the
+    /// next person from flipping one without the other.
+    @ViewBuilder
+    private var scenarioRewriteCard: some View {
+        if !rosterPromisesHold, let scenario {
+            VStack(alignment: .leading, spacing: DSSpacing.xs) {
+                sectionLabel(String(localized: "Before the Scenario"))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                Text(String(
+                    format: String(localized: "The roster numbers on this sheet describe the %@ as the league was generated. %@ rewrites this club — and only this club — when you confirm:"),
+                    team.name, scenario.displayName
+                ))
+                .font(DSType.text(DSType.Size.caption, .regular, prose: true))
+                .foregroundStyle(Color.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+                ForEach(Self.scenarioEdits(scenario), id: \.self) { line in
+                    HStack(alignment: .top, spacing: DSSpacing.xxs) {
+                        Image(systemName: "arrow.turn.down.right")
+                            .font(.system(size: DSType.Size.micro))
+                            .foregroundStyle(Color.warning)
+                        Text(line)
+                            .font(DSType.text(DSType.Size.caption, .regular, prose: true))
+                            .foregroundStyle(Color.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                DSDetailNote(
+                    // "No other club's players", not "the other 31 clubs are
+                    // untouched": Rebuild takes a pick each off three other
+                    // franchises and Win Now hands two away, so pick OWNERSHIP
+                    // does move. No other roster does, which is what makes the
+                    // 32 cards still comparable.
+                    text: String(localized: "No other club's players change — the one you pick is the one that changes — so the rest of the league still compares honestly."),
+                    icon: "exclamationmark.triangle"
+                )
+            }
+            .padding(DSSpacing.md)
+            .frame(maxWidth: .infinity)
+            .cardBackground()
+            .accessibilityElement(children: .combine)
+        }
+    }
+
+    /// The scenario's edits, one line per operation in `CareerScenarioApplier`.
+    ///
+    /// Rebuild's extra picks are stated as a total because the arithmetic is
+    /// closed: `LeagueGenerator.generateInitialDraftPicks` mints exactly one
+    /// pick per club per round for `LeagueGenerator.roundsPerDraft` rounds, so
+    /// a club walks in with 7 and `applyRebuild` adds one each in rounds 1-3.
+    /// Win Now removes this club's rounds 1 and 2 from the same 7. Cap Hell
+    /// touches no picks at all.
+    private static func scenarioEdits(_ scenario: CareerScenario) -> [String] {
+        switch scenario {
+        case .rebuild:
+            return [
+                String(localized: "Every attribute of every man on the roster drops 8 points, so the Roster OVR on this sheet falls with it."),
+                String(format: String(localized: "An extra first, second and third-round pick arrive from three other clubs: %d picks in the upcoming draft, not %d."), LeagueGenerator.roundsPerDraft + 3, LeagueGenerator.roundsPerDraft),
+                String(localized: "Your owner's patience is rewritten to 8 or 9 out of 10 and he stops asking for a title, whatever the Owner Patience card on this sheet says."),
+            ]
+        case .winNow:
+            return [
+                String(localized: "The fifteen best players gain 5 points, and the ten best also age two or three years."),
+                String(format: String(localized: "This club's own first and second-round picks are already spent: %d picks in the upcoming draft, not %d."), LeagueGenerator.roundsPerDraft - 2, LeagueGenerator.roundsPerDraft),
+                String(localized: "Your owner's patience is rewritten to 2 or 3 out of 10 and he wants the title now, whatever the Owner Patience card on this sheet says."),
+            ]
+        case .capHell:
+            return [
+                String(localized: "The twelve best players gain 3 points."),
+                String(localized: "Every salary on the roster is inflated until payroll sits at 105-108 % of the cap, so the cap space this sheet shows is gone and you start the career over the cap."),
+                String(localized: "The ten biggest contracts are locked in for another three or four years."),
+                String(localized: "Your owner's patience is rewritten to somewhere between 4 and 6 out of 10, whatever the Owner Patience card on this sheet says."),
+            ]
         }
     }
 
@@ -2127,13 +2438,19 @@ private struct TeamDetailSheet: View {
 
     // MARK: - Position Group Strengths Card
 
-    /// The best and the worst room on the roster. Both halves are true of the
-    /// league the player is about to start — in the modes where this card is
-    /// shown at all; see `rosterPromisesHold`. The fixed template derives them
-    /// from its real ratings, and the random league's generator builds a roster
-    /// that backs the claim up rather than one that merely might. Both grade
-    /// the defensive rooms under the club's OWN defensive scheme, because that
-    /// is what the roster screen the player checks this against does.
+    /// The best and the worst room on the roster, as the league stands now.
+    ///
+    /// Shown whenever the roster survives the tap (`rosterSurvivesConfirmation`
+    /// — i.e. every mode but Fantasy Draft), and true of the league the player
+    /// is about to start whenever `rosterPromisesHold`. A scenario is the gap
+    /// between those two: Win Now's +5 on the top 15 and Cap Hell's +3 on the
+    /// top 12 land unevenly across the rooms and can swap which one grades
+    /// highest, so `scenarioRewriteCard` sits above this card and says the
+    /// ratings are about to move. The fixed template derives both halves from
+    /// its real ratings, and the random league's generator builds a roster that
+    /// backs the claim up rather than one that merely might. Both grade the
+    /// defensive rooms under the club's OWN defensive scheme, because that is
+    /// what the roster screen the player checks this against does.
     @ViewBuilder
     private var groupStrengthCard: some View {
         if !preview.strongestGroup.isEmpty, !preview.weakestGroup.isEmpty {
@@ -2335,7 +2652,16 @@ private struct TeamDetailSheet: View {
             )
 
             DSDetailNote(
-                text: String(localized: "Four facts, no forecast. Nothing on this card projects a record — the game does not know what this team wins until the season is played."),
+                // The "four facts" claim survives, but it owed the player one
+                // more word about what KIND of fact each is. On the random
+                // league not one of the four is read off a roster: the record,
+                // the situation and the owner are `LeagueTeamData`'s authored
+                // backstory (a freshly generated league has played no season)
+                // and the cap space is `generateRoster`'s payroll draw. On a
+                // template the first three are the file's own 2026 rows.
+                text: catalog.source.isTemplate
+                    ? String(localized: "Four facts, no forecast. The first three are this league's own 2026 rows; the cap space is the random opening payroll explained with the Cap Space figure. Nothing here projects a record — the game does not know what this team wins until the season is played.")
+                    : String(localized: "Four facts, no forecast — and none of them a reading of the roster. The first three are the franchise's authored backstory, because a generated league has played no season yet, and the cap space is the random opening payroll explained with the Cap Space figure. Nothing here projects a record."),
                 icon: "calendar"
             )
         }
@@ -2542,7 +2868,14 @@ private struct TeamDetailSheet: View {
                 }
 
                 DSDetailNote(
-                    text: rosterPromisesHold
+                    // `rosterSurvivesConfirmation`, not `rosterPromisesHold`:
+                    // a scenario shifts the ratings but installs no new scheme,
+                    // so the first branch is still the true one for it. Reading
+                    // the stricter flag here would have printed the fantasy-draft
+                    // sentence — "a fantasy draft redeals every roster" — on a
+                    // Rebuild start, which is the same class of defect as the
+                    // one this wave is fixing.
+                    text: rosterSurvivesConfirmation
                         ? String(localized: "The rooms in Roster Shape are graded under this club's own front — a 3-4 fields one nose tackle where a 4-3 fields two — and every man on the roster starts with his playbook knowledge seeded on these two systems. You take the job with the staff seats empty, so what your roster screen grades against from then on is the pair your own coordinators run.")
                         : String(localized: "This is what the building ran on before you arrived. A fantasy draft redeals every roster in the league, and you take the job with the staff seats empty, so the systems your club installs are the ones the coordinators you hire bring with them."),
                     icon: "list.clipboard"
@@ -2792,6 +3125,29 @@ private struct CompareTeamsSheet: View {
                         }
                     }
                     .padding(.vertical, 8)
+                }
+                // Outside the grid, not a row in it: the grid scrolls in both
+                // axes and a full-width note inside it fights the horizontal
+                // measure. As an inset it stays put under a table the player is
+                // panning around.
+                //
+                // This screen exists to be read column-against-column, which is
+                // exactly the reading two of its rows cannot bear. Difficulty is
+                // `LeagueTeamData`'s authored integer on the random league (see
+                // `TeamDetailSheet.difficultyProvenance`), and Cap Space is one
+                // uniform draw per club from
+                // `LeagueGenerator.rosterCapTargetBand` (see
+                // `TeamDetailSheet.statsRow`). Every other row here is read off
+                // the league. Saying so is cheaper than a player deciding a
+                // franchise on a die roll.
+                .safeAreaInset(edge: .bottom) {
+                    DSDetailNote(
+                        text: String(localized: "Difficulty is an authored label for the franchise and Cap Space is a random opening payroll — neither is a reading of the roster. The rest of these rows are."),
+                        icon: "dice"
+                    )
+                    .padding(.horizontal, DSSpacing.md)
+                    .padding(.vertical, DSSpacing.xs)
+                    .background(Color.backgroundSecondary)
                 }
             }
             .navigationTitle("Compare Teams")

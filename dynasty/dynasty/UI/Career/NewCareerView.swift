@@ -932,7 +932,14 @@ struct NewCareerView: View {
                                 .foregroundStyle(Color.accentBlue)
                         }
                         Label {
-                            Text("Scenarios (Rebuild, Win Now, Cap Hell) reshape your team into a hand-crafted situation with a clear challenge to solve.")
+                            // The second sentence is the timing, and it is here
+                            // because the team picker draws its cards from the
+                            // league BEFORE `CareerScenarioApplier` runs — the
+                            // one thing on this screen the pick-time-league
+                            // refactor could not pull forward, because a
+                            // scenario reshapes whichever club the next screen's
+                            // tap chooses.
+                            Text("Scenarios (Rebuild, Win Now, Cap Hell) reshape your team into a hand-crafted situation with a clear challenge to solve. They are applied after you choose a club, so the team picker shows you each club as the league was built — the scenario's own changes are listed there before you confirm.")
                         } icon: {
                             Image(systemName: "flag.checkered")
                                 .foregroundStyle(Color.accentGold)
@@ -1331,6 +1338,26 @@ private struct CareerSetupCard: View {
         setup.scenario == nil ? Color.accentBlue : Color.accentGold
     }
 
+    /// WHEN a card's promise is kept, for the three cards that keep it late.
+    ///
+    /// The pick-time-league refactor moved random-league generation in front of
+    /// the team picker so that the club cards describe the league the player
+    /// actually gets. A scenario is the one choice on this screen that cannot
+    /// join it: `CareerScenarioApplier.apply` re-parametrizes the CHOSEN club —
+    /// its ratings, its salaries and its pick ownership — and which club that
+    /// is, is what the next screen's tap decides. So the picker's roster
+    /// numbers are pre-scenario, and this is where the player is told, one
+    /// screen before he starts reading them. `TeamDetailSheet`'s
+    /// `scenarioRewriteCard` then lists the exact edits on the club he opens.
+    ///
+    /// Fantasy Draft needs no line here: it changes the same numbers, but the
+    /// picker suppresses the roster cards outright in that mode rather than
+    /// qualifying them.
+    private var timingNote: String? {
+        guard setup.scenario != nil else { return nil }
+        return String(localized: "Applied to your club after you pick it — the team picker's roster, cap and pick numbers are what the league starts with, before this scenario rewrites them.")
+    }
+
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
             ZStack {
@@ -1370,6 +1397,19 @@ private struct CareerSetupCard: View {
                     .font(.system(size: DSType.Size.footnote, weight: .medium))
                     .foregroundStyle(isSelected ? Color.textSecondary : Color.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
+
+                if let timingNote {
+                    HStack(alignment: .top, spacing: DSSpacing.xxs) {
+                        Image(systemName: "clock.badge.exclamationmark")
+                            .font(.system(size: DSType.Size.micro, weight: .semibold))
+                            .foregroundStyle(Color.warning)
+                        Text(timingNote)
+                            .font(.system(size: DSType.Size.micro, weight: .medium))
+                            .foregroundStyle(Color.textTertiaryReadable)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .padding(.top, DSSpacing.xxs)
+                }
             }
 
             Spacer(minLength: 4)
@@ -1393,7 +1433,7 @@ private struct CareerSetupCard: View {
         )
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(setup.displayName), \(setup.badge.lowercased()). \(setup.blurb)")
+        .accessibilityLabel("\(setup.displayName), \(setup.badge.lowercased()). \(setup.blurb)\(timingNote.map { " \($0)" } ?? "")")
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
     }
 }
