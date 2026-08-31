@@ -504,9 +504,18 @@ struct MentoringView: View {
     ///
     /// The label used to size the bonus off the mentor's LEADERSHIP;
     /// `PlayerDevelopmentEngine.applyMentoring` sizes it off his COACHABILITY,
-    /// so a "+3" promised here could arrive as a +1. The figure is quoted from
-    /// the engine now, and only where the engine will act at all — everywhere
-    /// else the honest answer is that the pairing changes nothing.
+    /// and the figure is quoted from the engine now, only where the engine will
+    /// act at all — everywhere else the honest answer is that the pairing
+    /// changes nothing.
+    ///
+    /// What that figure MEANS is the second half of the fix. `applyMentoring`
+    /// hands it to `applyMentalBonus(player:totalPoints:range:)` as
+    /// `totalPoints`, and that function reads it as a COUNT — how many of the
+    /// six mental attributes to touch (`for i in 0..<min(count, shuffled.count)`,
+    /// PlayerDevelopmentEngine.swift:2439) — then rolls each one's move
+    /// separately from `range`, here `1...3`. So it is not a bonus size at all:
+    /// a coachable mentor moves three attributes, each by +1 to +3, and the old
+    /// "+3 mental attr." printed the count with a plus sign in front of it.
     @ViewBuilder
     private func expectedBenefitLabel(mentor: Player, mentee: Player) -> some View {
         if engineHonoursPair(mentor: mentor, mentee: mentee) {
@@ -515,8 +524,10 @@ struct MentoringView: View {
             // PlayerDevelopmentEngine.swift, so it is not visible here. Spelled out
             // rather than promoted: the helper is that file's private business and a
             // view is not a reason to widen it.
-            let bonusPoints = min(3, max(1, Int((baseMentorBonus * 3.0).rounded())))
-            Text("+\(bonusPoints) mental attr.")
+            let attributesTouched = min(3, max(1, Int((baseMentorBonus * 3.0).rounded())))
+            Text(attributesTouched == 1
+                ? "1 mental attr, +1\u{2013}3"
+                : "\(attributesTouched) mental attrs, +1\u{2013}3 each")
                 .font(.caption2)
                 .foregroundStyle(Color.success)
         } else {
