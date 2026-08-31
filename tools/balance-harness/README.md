@@ -503,6 +503,29 @@ ordering RB/CB < standard < QB/OL · `6.5` R mean 0.45-0.55, p10 ≤ 0.30,
 p90 ≥ 0.85 and the four-state motivation mix · `6.6` career length ·
 `6.7` growth shape · `6.8` split-half stability.
 
+### The offseason development ledger (task #97 / F-71, diagnostic — no gate)
+
+Printed as `OFFSEASON DEVELOPMENT LEDGER`, one row per season, in the exact
+units `DevelopmentSourceDiag.report` prints on the shipped smoke's
+`SMOKE: diag devsource … offseasonDevelop=` term: the sum of every man's
+UNROUNDED `Player.overall` after `PlayerDevelopmentEngine.processOffseason`
+minus before, over the men the pass was handed. `crExactOverall` is
+`Player.overall` without its final `.rounded()`, kept byte-identical to the
+shipped diag so both sides are read off one ruler.
+
+**Read it at a matched `leaguePot`, never on the raw rate.** The pass converts
+headroom, so its rate is a function of the ceiling left in the population; the
+row therefore carries `meanOVR`, `leaguePot` and `headroom` for the pre-camp
+population alongside the gain. This rig's equilibrium sits near 12.7 points of
+headroom, while a freshly generated app league opens at ~2 and takes several
+seasons to climb — comparing those two rates without the headroom column
+compares different questions.
+
+Why it exists: two in-tree notes (TODO `#97`, `docs/AI_FIX_QUEUE.md` F-71) read
+the smoke's `offseasonDevelop` figure as evidence that the shipped pipeline
+over-develops relative to this rig, and there was no rig-side number to check
+that against. There is now.
+
 ### The practice-squad / camp block (task #157, diagnostic — no gate)
 
 Printed after `SALARY BY POSITION`. At every measured cutdown the scenario

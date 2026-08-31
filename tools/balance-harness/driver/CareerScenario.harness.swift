@@ -36,6 +36,20 @@ import Foundation
 // MARK: - Small stats helpers (cr-prefixed: the harness is one module)
 
 func crMean(_ xs: [Double]) -> Double { xs.isEmpty ? 0 : xs.reduce(0, +) / Double(xs.count) }
+
+/// `Player.overall` WITHOUT its final `.rounded()` — the same quantity
+/// `DevelopmentSourceDiag.exactOverall` books the shipped smoke's `diag
+/// devsource` line in.
+///
+/// Why unrounded: `Player.overall` is
+/// `Int((positionAttributes.overall * 0.5 + physical.average * 0.3 + mental.average * 0.2).rounded())`
+/// (`Domain/Models/Player/Player.swift`). A camp that hands a man +0.3 of a
+/// point rounds away to zero player-by-player, and a whole league of those is
+/// precisely the drift this ledger exists to see. Kept byte-identical to the
+/// shipped diag so the two sides are read off one ruler rather than two.
+func crExactOverall(_ p: Player) -> Double {
+    p.positionAttributes.overall * 0.5 + p.physical.average * 0.3 + p.mental.average * 0.2
+}
 func crPct(_ xs: [Double], _ p: Double) -> Double {
     guard !xs.isEmpty else { return 0 }
     let s = xs.sorted()
@@ -547,6 +561,25 @@ final class CRLeague {
     var plateauPlayerSeasons = 0
     var lateBloomerPlayerSeasons = 0
     var measuredOffseasonPasses = 0
+    /// Task #97 / F-71 MEASUREMENT: the rig's own `offseasonDevelop` ledger, in
+    /// the units `DevelopmentSourceDiag.report` prints on the shipped smoke's
+    /// `diag devsource` line — the exact (unrounded) OVR and `truePotential`
+    /// the ONE pass both harnesses run moved, divided by the men it was handed.
+    ///
+    /// Both sides call the same `PlayerDevelopmentEngine.processOffseason`, so
+    /// a divergence here cannot be a development CONSTANT; it has to be in the
+    /// `OffseasonInputs` the two callers assemble. That is exactly the lever
+    /// TODO `#97` names (`WeekAdvancer.processOffseason`'s opportunity /
+    /// coaching / scheme-fit accumulations), and until this line exists there
+    /// is nothing on the rig side to compare the smoke's number against.
+    ///
+    /// `baseOVR` / `basePot` are the population the pass was handed, BEFORE it
+    /// ran. They are on the line because the pass converts headroom, so its
+    /// rate is only readable next to the headroom it had: the shipped smoke's
+    /// season-1 league opens ~2 points of `leaguePot` over mean OVR while this
+    /// rig's equilibrium carries ~11, and reading those two rates against each
+    /// other without the headroom column compares different questions.
+    var offseasonDevelopBySeason: [Int: (ovr: Double, pot: Double, n: Int, baseOVR: Double, basePot: Double)] = [:]
     var leagueOverallBySeason: [Int: [Double]] = [:]
     /// Task #69: work ethic alongside the OVR/age/pot triple, so the headroom
     /// block can ask whether unrealised ceiling is correlated with the ABILITY
@@ -1629,6 +1662,16 @@ final class CRLeague {
 
             var before: [UUID: Int] = [:]
             for p in club.roster { before[p.id] = p.overall }
+            // Task #97 / F-71: the same snapshot `DevelopmentSourceDiag.measure`
+            // takes around this exact call in `WeekAdvancer` — unrounded OVR and
+            // `truePotential`, over the players the pass is HANDED. Taken every
+            // season, burn-in included, because the smoke's own reading is of a
+            // league three seasons old and the rig's equilibrium is not the same
+            // population as its third season.
+            var beforeExact: [UUID: (ovr: Double, pot: Double)] = [:]
+            for p in club.roster {
+                beforeExact[p.id] = (crExactOverall(p), Double(p.truePotential))
+            }
 
             PlayerDevelopmentEngine.processOffseason(
                 players: club.roster,
@@ -1648,6 +1691,18 @@ final class CRLeague {
                     }
                 }
             )
+
+            var row = offseasonDevelopBySeason[season]
+                ?? (ovr: 0, pot: 0, n: 0, baseOVR: 0, basePot: 0)
+            for p in club.roster {
+                guard let prior = beforeExact[p.id] else { continue }
+                row.ovr += crExactOverall(p) - prior.ovr
+                row.pot += Double(p.truePotential) - prior.pot
+                row.baseOVR += prior.ovr
+                row.basePot += prior.pot
+                row.n += 1
+            }
+            offseasonDevelopBySeason[season] = row
 
             if measured {
                 for p in club.roster {
@@ -2307,6 +2362,59 @@ func crReport(leagues: [CRLeague], elapsed: TimeInterval) {
     // so a divergence here is a difference in league DYNAMICS (intake, churn,
     // install years) rather than in the definition of fit — which is the only
     // kind of difference worth arguing about.
+    // ---- 5a-bis. The offseason development ledger (task #97 / F-71) ------
+    //
+    // Printed in the units and the shape of `DevelopmentSourceDiag.report`'s
+    // `offseasonDevelop=` term, so the rig's number and the shipped smoke's
+    // number are the same measurement rather than two similar-sounding ones.
+    //
+    // What it is: (sum over every man the pass was handed of his UNROUNDED
+    // `Player.overall` after minus before) / (the number of men handed to the
+    // pass), per season. The shipped diag divides by the league's rostered
+    // count instead, which in the app is a LARGER divisor than the population
+    // it develops — `WeekAdvancer` skips holdouts and `CampRosterEngine`
+    // camp bodies (#205a) — so the smoke's figure is, if anything, the more
+    // conservative of the two.
+    //
+    // Both callers run the SAME `PlayerDevelopmentEngine.processOffseason`.
+    // Any gap between these two lines is therefore a gap in `OffseasonInputs`
+    // or in the facility multiplier, not in a development constant.
+    print("")
+    print("--- OFFSEASON DEVELOPMENT LEDGER (mirror of the smoke's `diag devsource`) -")
+    var devSeasons: Set<Int> = []
+    for l in leagues { devSeasons.formUnion(l.offseasonDevelopBySeason.keys) }
+    var devPerSeasonMeans: [Double] = []
+    var devHeadroomMeans: [Double] = []
+    for s in devSeasons.sorted() {
+        var ovr = 0.0, pot = 0.0, n = 0, baseOVR = 0.0, basePot = 0.0
+        for l in leagues {
+            guard let r = l.offseasonDevelopBySeason[s] else { continue }
+            ovr += r.ovr; pot += r.pot; n += r.n
+            baseOVR += r.baseOVR; basePot += r.basePot
+        }
+        guard n > 0 else { continue }
+        let denom = Double(n)
+        let perPlayer = ovr / denom
+        let meanOVR = baseOVR / denom
+        let meanPot = basePot / denom
+        if s > cfg.burnIn {
+            devPerSeasonMeans.append(perPlayer)
+            devHeadroomMeans.append(meanPot - meanOVR)
+        }
+        print(String(format: "  season %2d  n=%7d  meanOVR %5.2f  leaguePot %5.2f  headroom %5.2f  ->  offseasonDevelop=%+.3f ovr/player  pot=%+.3f/player%@",
+                     s, n, meanOVR, meanPot, meanPot - meanOVR, perPlayer, pot / denom,
+                     s <= cfg.burnIn ? "   (burn-in — the league is still filling)" : ""))
+    }
+    let devEquilibrium = crMean(devPerSeasonMeans)
+    let devHeadroom = crMean(devHeadroomMeans)
+    print(String(format: "  RIG EQUILIBRIUM (seasons %d-%d, the %d post-burn-in offseasons): %+.3f ovr/player/season at %.2f points of headroom",
+                 cfg.burnIn + 1, cfg.totalSeasons, devPerSeasonMeans.count, devEquilibrium, devHeadroom))
+    print("  Compare against the shipped `SMOKE: diag devsource ... offseasonDevelop=` term,")
+    print("  AT A MATCHED `leaguePot`. Both callers run the same processOffseason, so a")
+    print("  difference at matched headroom is a difference in OffseasonInputs (playing")
+    print("  time, position coach, scheme fit) or in facilityMultiplier — and a difference")
+    print("  at UNMATCHED headroom is mostly a difference in how much ceiling was left.")
+
     print("")
     print("--- SCHEME FIT (shared CoachingEngine.rosterSchemeFit) --------------------")
     var fitSeasons: Set<Int> = []
