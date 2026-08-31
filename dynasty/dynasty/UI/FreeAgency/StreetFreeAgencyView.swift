@@ -18,6 +18,13 @@ import SwiftData
 // `ContractEngine.veteranMinimum`. Nothing on this screen is a discount, and
 // nothing here is a second free-agent market — see `isOpenToUser` for the one
 // phase the door is shut in and why.
+//
+// It also signs at the SAME RATE. `InSeasonMarketEngine.maxSigningsPerClubPerWeek`
+// rations the other 31 clubs inside `runWeeklyPass`, and this screen is rationed
+// by that same constant through `userRefusal` — one club is not allowed to drain
+// a pool the other thirty-one are queuing for. The rail is a sentence here, never
+// a dead button: `refusalText` says the man is signed and when the next one is
+// available, and the SIGNINGS column carries the count before it ever bites.
 
 struct StreetFreeAgencyView: View {
 
@@ -32,6 +39,16 @@ struct StreetFreeAgencyView: View {
     @State private var scope: BoardScope = .needs
     @State private var confirming: Player? = nil
     @State private var banner: Banner? = nil
+
+    /// Street signings this club has already made in the current calendar
+    /// bucket — `InSeasonMarketEngine.userSigningsThisWeek`.
+    ///
+    /// Held in state rather than read where it is used because it lives in
+    /// `UserDefaults`: `canSign` is evaluated once per ROW, and a decode per row
+    /// per render to answer a question that changes once a signing is a decode
+    /// per row per render too many. Seeded on appear, re-read after a signing —
+    /// the only two moments it can move while this screen is up.
+    @State private var signingsUsed: Int = 0
 
     private enum BoardScope: String, CaseIterable, Identifiable {
         case needs
@@ -124,14 +141,19 @@ struct StreetFreeAgencyView: View {
     private var refusal: InSeasonMarketEngine.StreetRefusal? {
         guard let team = ourTeam else { return nil }
         return InSeasonMarketEngine.userRefusal(
+            career: career,
             team: team,
             roster: ourRoster,
-            capMode: career.capMode,
-            phase: career.currentPhase
+            signingsThisWeek: signingsUsed
         )
     }
 
     private var canSign: Bool { ourTeam != nil && refusal == nil }
+
+    /// Signings this club is allowed in one week — the AI's own constant, the
+    /// one `runWeeklyPass` rations the other 31 clubs with. Quoted, never
+    /// retyped, so the two halves of the market cannot drift apart.
+    private var railLimit: Int { InSeasonMarketEngine.maxSigningsPerClubPerWeek }
 
     // MARK: - Body
 
@@ -164,6 +186,7 @@ struct StreetFreeAgencyView: View {
             }
             .navigationTitle("Street Free Agents")
             .navigationBarTitleDisplayMode(.inline)
+            .onAppear { signingsUsed = InSeasonMarketEngine.userSigningsThisWeek(career: career) }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Done") { dismiss() }
@@ -193,6 +216,14 @@ struct StreetFreeAgencyView: View {
                 "Roster",
                 "\(ourRoster.count)/\(rosterCeiling)",
                 tint: ourRoster.count >= rosterCeiling ? Color.warning : Color.textPrimary
+            )
+            // The rail, standing next to the roster count and the cap because it
+            // is the third thing that can stop a signing and the only one of the
+            // three the user cannot clear from another screen.
+            summaryStat(
+                "Signings",
+                "\(signingsUsed)/\(railLimit)",
+                tint: signingsUsed >= railLimit ? Color.warning : Color.textPrimary
             )
             summaryStat(
                 "Cap room",
@@ -272,6 +303,21 @@ struct StreetFreeAgencyView: View {
             // the ceiling — the board withholds those, and says so rather than
             // claiming they do not exist.
             Text("This wire lists free agents under \(InSeasonMarketEngine.streetCeilingOverall) overall — camp cuts, washouts and men coming back from a year out. Anyone still unsigned above that is not on this board. Every deal here is one year at the veteran minimum.")
+                .font(.caption)
+                .foregroundStyle(Color.textSecondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            // Said before it bites, not only after. The SIGNINGS column reads
+            // "0/1" from the moment the screen opens, and a counter nobody
+            // explained is a counter the user reads as a bug the first time it
+            // stops him.
+            // "Per turn of the calendar" rather than "a week" because the count
+            // resets on the stamp `InSeasonMarketEngine.calendarStamp` builds:
+            // a week during the season, a stage of the offseason out of it,
+            // where `career.currentWeek` does not advance at all.
+            Text(railLimit == 1
+                 ? "One signing per turn of the calendar — the same weekly rail the other 31 clubs sign under. Enough to patch a hole; not enough to rebuild a position room in an afternoon."
+                 : "\(railLimit) signings per turn of the calendar — the same weekly rail the other 31 clubs sign under.")
                 .font(.caption)
                 .foregroundStyle(Color.textSecondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -417,10 +463,33 @@ struct StreetFreeAgencyView: View {
         switch refusal {
         case .marketOpen:
             return "Free agency is open — these men are on the market screen, at market prices. The street reopens once the market closes."
+        case .railSpent(let limit, let reopens):
+            return "\(railSpentClause(limit: limit)) Every club in the league signs at most \(limit == 1 ? "one man" : "\(limit) men") off the street a week, and yours is no exception. \(railReopenClause(reopens))"
         case .rosterFull(let ceiling):
             return "Roster full at \(ceiling). Release a player before you sign one."
         case .shortOfCap(let needed, let available):
             return "The veteran minimum is \(DraftRecapView.formatCap(needed)) and you have \(DraftRecapView.formatCap(available)). Clear room first."
+        }
+    }
+
+    /// "You have signed your man." Written off the constant rather than around
+    /// the number 1, so raising `maxSigningsPerClubPerWeek` moves the sentence
+    /// with it instead of leaving a lie on the screen.
+    private func railSpentClause(limit: Int) -> String {
+        limit == 1
+            ? "You have signed your man for the week."
+            : "You have made all \(limit) of this week's signings."
+    }
+
+    /// When the rail comes back. Two sentences because the calendar only has
+    /// two honest answers — see `InSeasonMarketEngine.RailReopen`, which names
+    /// a week only where `WeekAdvancer` actually advances one.
+    private func railReopenClause(_ reopens: InSeasonMarketEngine.RailReopen) -> String {
+        switch reopens {
+        case .week(let next):
+            return "The wire reopens in Week \(next)."
+        case .nextAdvance:
+            return "The wire reopens the next time you advance the calendar."
         }
     }
 
@@ -435,10 +504,13 @@ struct StreetFreeAgencyView: View {
         let outcome = InSeasonMarketEngine.signForUser(
             player,
             to: team,
-            roster: ourRoster,
-            capMode: career.capMode,
-            phase: career.currentPhase
+            career: career,
+            roster: ourRoster
         )
+
+        // Re-read either way: the engine spends the rail itself, and on a
+        // refusal the count it read is the one this screen should be showing.
+        signingsUsed = InSeasonMarketEngine.userSigningsThisWeek(career: career)
 
         switch outcome {
         case .signed(let salary):
