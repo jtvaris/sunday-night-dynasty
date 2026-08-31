@@ -511,7 +511,11 @@ struct MentoringView: View {
     private func expectedBenefitLabel(mentor: Player, mentee: Player) -> some View {
         if engineHonoursPair(mentor: mentor, mentee: mentee) {
             let baseMentorBonus = Double(mentor.mental.coachability - 1) / 98.0
-            let bonusPoints = Int((baseMentorBonus * 3.0).rounded().clamped(to: 1...3))
+            // `clamped(to:)` is a `private extension Comparable` inside
+            // PlayerDevelopmentEngine.swift, so it is not visible here. Spelled out
+            // rather than promoted: the helper is that file's private business and a
+            // view is not a reason to widen it.
+            let bonusPoints = min(3, max(1, Int((baseMentorBonus * 3.0).rounded())))
             Text("+\(bonusPoints) mental attr.")
                 .font(.caption2)
                 .foregroundStyle(Color.success)
