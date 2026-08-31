@@ -491,6 +491,16 @@ struct StaffTemplatesView: View {
         /// Seats the market could only fill with a man the staff screen will
         /// badge ✗ Conflict against the head coach.
         var conflicts: Int
+        /// Seats filled by a man the staff screen will badge ⚠ Tension. Counted
+        /// and said out loud separately from `conflicts`, which is the ✗ band
+        /// alone — the same repair `CoachingStaffView` already carries
+        /// (`tensionHires`, and the note at its result sheet): a line reading
+        /// "every planned seat was filled" sat directly over a coordinator row
+        /// wearing a warning triangle. It matters more here than there, because
+        /// `bestCoach` narrows to the template's wanted archetype before
+        /// ranking, so the tension penalty in `rank` cannot steer the pick off
+        /// a temperament the template asked for.
+        var tensionHires: Int
 
         var unfilled: Int { max(0, seatsPlanned - hired) }
 
@@ -513,6 +523,9 @@ struct StaffTemplatesView: View {
             }
             if conflicts > 0 {
                 parts.append("\(conflicts) clash with your head coach — nobody else was affordable for those chairs")
+            }
+            if tensionHires > 0 {
+                parts.append("\(tensionHires) sit in tension with your head coach — a workable fit, not a clash")
             }
             return parts.isEmpty ? "Every planned seat was filled." : parts.joined(separator: ". ") + "."
         }
@@ -546,7 +559,8 @@ struct StaffTemplatesView: View {
             spent: 0,
             personalityMatched: 0,
             personalityAsked: readout.entries.filter { $0.seat.personality != nil }.count,
-            conflicts: 0
+            conflicts: 0,
+            tensionHires: 0
         )
 
         for entry in readout.entries {
@@ -577,6 +591,12 @@ struct StaffTemplatesView: View {
                 hire(coach: pick.coach, teamID: teamID)
                 if pick.matchedPersonality { result.personalityMatched += 1 }
                 if pick.wasConflict { result.conflicts += 1 }
+                // Read BEFORE `hcPersonality` moves below: every man is judged
+                // against the head coach he will work for, and for the head
+                // coach's own chair that is nobody yet.
+                if !pick.wasConflict, band(pick.coach, hcPersonality) == .tension {
+                    result.tensionHires += 1
+                }
                 if role == .headCoach { hcPersonality = pick.coach.personality }
                 wallet[pot] = (wallet[pot] ?? 0) - pick.coach.salary
                 result.spent += pick.coach.salary
@@ -696,6 +716,15 @@ struct StaffTemplatesView: View {
     ///    an EMPTY coordinator chair costs efficiency and development every
     ///    week where a clash costs harmony the user can fix by replacing one
     ///    man.
+    ///
+    /// Tier 1 narrows to the wanted archetype BEFORE ranking, so every survivor
+    /// shares one personality and therefore one chemistry band: the `-4` tension
+    /// penalty in ``rank(_:role:hcPersonality:)`` is uniform across them and
+    /// cannot steer the pick off a temperament the template asked for. Asking
+    /// for a temperament that sits in tension with this head coach is the user's
+    /// own instruction, so it is honoured — and counted into
+    /// `ApplyResult.tensionHires` and named in the result card rather than
+    /// swallowed.
     private func bestCoach(
         in pool: [Coach],
         cap: Int,
