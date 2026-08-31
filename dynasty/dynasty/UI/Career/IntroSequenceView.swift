@@ -1882,9 +1882,32 @@ private struct ReadyToBeginStep: View {
                                 // Your Dynasty." (a fixed 22) and overtook it
                                 // at the first Larger Text step, inverting the
                                 // hierarchy at exactly the sizes it matters
-                                // most. Nothing in `DSType` scales — the whole
-                                // ladder is fixed — so the fix is the ladder,
-                                // not a second scaling font on one screen.
+                                // most.
+                                //
+                                // The cost, stated plainly: this line no longer
+                                // scales. `DSType` is a ladder of bare point
+                                // sizes and none of its steps scale — but that
+                                // is a fact about `DSType`, NOT about the app,
+                                // and it is not house policy. Counted over
+                                // dynasty/dynasty there are ~2,009 semantic-font
+                                // call sites (`.caption`, `.subheadline`,
+                                // `.caption2`, `.headline`, `.title3`, …)
+                                // against ~2,203 `.system(size:)` ones, so
+                                // roughly half the app IS on Dynamic Type —
+                                // semantic fonts scale without needing
+                                // `relativeTo:`, of which there are zero.
+                                //
+                                // The alternative not taken was to put BOTH
+                                // lines on semantic fonts (`.title` over
+                                // `.title3`), which holds the ratio at every
+                                // size AND keeps scaling. It was declined only
+                                // because it re-sizes "Build Your Dynasty." —
+                                // the product's own name-line on the hero
+                                // screen — which is a visual decision, not a
+                                // token one. Whoever makes that decision should
+                                // know the rest of this screen is fixed too:
+                                // the CTA below is the one thing left that
+                                // grows, inside fixed capsule padding.
                                 Text("with the \(team.fullName)")
                                     .font(.system(size: DSType.Size.title3, weight: .medium))
                                     .foregroundStyle(Color.textSecondary)

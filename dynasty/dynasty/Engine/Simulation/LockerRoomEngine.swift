@@ -480,22 +480,56 @@ enum LockerRoomEngine {
     /// `PlaySimulator.primaryTargetShare` to 1.0, `Double.random(in: 0..<1) <
     /// 1.0` is always true, so `weightedReceiverSelection` can only ever pick
     /// out of `primaryTargets` (top-3 WR + best TE + best RB), and `findQB` /
-    /// `findRB` / `findWR` field only the top man at their spot. WR4+, TE2,
-    /// RB2, FB and QB2 therefore cannot register a single touch in any
-    /// simulated game — while the five who ARE fielded practically always
-    /// register one over a full game's attempts. The penalty has consequently
-    /// inverted: it almost never reaches the starter whose usage dried up (the
-    /// case the card copy describes) and always reaches the backup, who cannot
-    /// escape it by playing better. It also lands on the user's roster and his
+    /// `findRB` / `findWR` field only the top man at their spot. So while the
+    /// men above him are on the field, WR4+, TE2, RB2, FB and QB2 cannot
+    /// register a single touch — while the five who ARE fielded practically
+    /// always register one over a full game's attempts.
+    ///
+    /// How long "while" lasts is the whole scope of this gap, and it differs by
+    /// path. `primaryTargets` / `findRB` pick out of the roster slice they are
+    /// HANDED, not out of the depth chart in the abstract:
+    ///
+    /// - QUICK SIM: `GameSimulator` builds its slice once, from
+    ///   `MedicalEngine.dressed`, and never substitutes mid-game — not even for
+    ///   an injury. The backup is shut out for the full sixty minutes.
+    /// - COACHED GAME: `LiveGameEngine` hands `PlaySimulator`
+    ///   `simAvailablePlayers(...)`, which strips `sidelinedIDs` — injured plus
+    ///   manually benched plus the fatigue-rested RB — first, so the sim
+    ///   re-picks its QB/RB/targets from whoever is left and the replacement
+    ///   genuinely plays. RB2 takes a drive's carries every time RB1 crosses
+    ///   `rbRotationFatigueThreshold` (75, a routine event over ~20 carries),
+    ///   and a manually benched starter promotes his backup into the primary
+    ///   group. Those two are player's-team-only by design (an AI game must
+    ///   stay identical to the quick sim); a mid-game INJURY promotes the next
+    ///   man on either side.
+    ///
+    /// The penalty is skewed rather than absolute, then: it almost never
+    /// reaches the starter whose usage dried up (the case the card copy
+    /// describes) and lands on the backup, who on the quick-sim path has no way
+    /// to play his way out of it. It also lands on the user's roster and his
     /// weekly opponent alone, because theirs is the only real box score the
     /// week produces — no AI club pays it.
     ///
-    /// Traced over a 17-week 11-6 season at chemistry 58, starting morale 70, a
-    /// stats-motivated backup finishes below an identical non-stats teammate by
-    /// 2-4 morale for most archetypes and by 14 for `.steadyPerformer` /
-    /// `.quietProfessional`, whose damping leaves clamp headroom for the full
-    /// −2 every week. Whether an unplayable backup SHOULD be unhappy about
-    /// usage is a design call, so nothing is exempted here yet.
+    /// What it costs over a season, measured on the exact model above (start
+    /// morale 70, chemistry 58, 17-week 11-6, zero touches every week, against
+    /// an identical non-`.stats` teammate) across 4,000 shuffles of the result
+    /// order. The tax is UNEVEN and ORDER-DEPENDENT, from 0 to −16:
+    ///
+    /// - `.feelPlayer`, `.dramaQueen`: **0**, every ordering. Their own swing
+    ///   has already spent the ±`weeklyMoraleSwingCap` budget in both
+    ///   directions, so the −2 never survives the clamp.
+    /// - `.teamLeader`, `.mentor`, `.fieryCompetitor`: −4 mean, −10 worst.
+    /// - `.loneWolf`, `.classClown` (and anything on the `default` branch):
+    ///   −7 mean, −16 worst.
+    /// - `.steadyPerformer`, `.quietProfessional`: −12 to −14 (−13 mean),
+    ///   because their damping leaves clamp headroom for the full −2 nearly
+    ///   every week.
+    ///
+    /// Order matters as much as archetype: front-load the six losses and the
+    /// middle two groups land at −9 and −16 rather than their means. Quote the
+    /// means, not a best case — a perfectly alternating schedule is the only
+    /// shape that reads as small. Whether an unplayable backup SHOULD be
+    /// unhappy about usage is a design call, so nothing is exempted here yet.
     ///
     /// Only the offensive skill positions are judged. `PlayerGameStats` has no
     /// column an offensive lineman or a punter can fill (see

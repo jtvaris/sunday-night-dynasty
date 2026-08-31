@@ -2281,9 +2281,22 @@ struct PlayerDetailView: View {
         //    franchise-tagged man and for every player in a sandbox career).
         //    So what is missing here is a lever, not a problem, and the note
         //    says that instead of denying the problem.
+        //
+        //    The closer names no CAUSE, deliberately, because the two doors are
+        //    shut for two different reasons and only one of them is the deal
+        //    length. It IS why the extension is closed (`canExtend` gates on
+        //    `contractYearsRemaining <= extensionWindowYears`). It is the
+        //    opposite of why the repricing is closed: `canRenegotiate` wants
+        //    `contractYearsRemaining >= 1`, so a long deal HELPS it — the
+        //    blocker is the franchise tag or a sandbox career. An earlier
+        //    draft hung "with that much deal still to run" off both halves,
+        //    which told a tagged man's GM that waiting the deal down would open
+        //    a repricing (the tag clears at the March rollover instead) and told
+        //    a sandbox GM the same thing permanently (sandbox has no cap to
+        //    relieve at all).
         if player.contractYearsRemaining > Self.extensionWindowYears {
             let closer = value == .overpaid
-                ? "That gap is real, but with that much deal still to run there is no extension or repricing to open from here this season."
+                ? "That gap is real, but neither an extension nor a repricing is open from here this season."
                 : "Nothing on this file is asking for a decision this season."
             return (.standPat, "He has \(contractYearsText) left, which is too much deal to renew, and \(marketClause). \(closer)")
         }

@@ -5991,13 +5991,27 @@ private struct CoachingStaffReviewSheet: View {
         if agers.isEmpty {
             ageClause = "and nobody is old enough yet for the engine's ageing decline"
         } else {
-            // Two gates, so two clauses. `applyAgingDecline` opens at 50 and
-            // covers everyone named here; `shouldRetire` returns false under 65
-            // and will never roll a man in the 50–64 bands. Hung off the end of
-            // the whole list, the rider said a 52-year-old could walk because a
-            // 66-year-old shares the sentence with him — so it now names the
-            // men the engine can actually take, whenever that is not all of them.
-            let retirees = agers.filter { $0.age >= 65 }
+            // Two gates, so two clauses. Hung off the end of the whole list,
+            // the rider said a 52-year-old could walk because a 66-year-old
+            // shares the sentence with him — so it now names the men the engine
+            // can actually take, whenever that is not all of them.
+            //
+            // Both gates are read against the BIRTHDAY, because this sheet is
+            // only the confirmation step for the advance out of
+            // `.coachingChanges` and the ages printed here are pre-advance. In
+            // `applySeasonalDevelopment` the order is `applyAgingDecline` ->
+            // `coach.age += 1`, and `WeekAdvancer` rolls retirement only after
+            // that whole pass:
+            //
+            //   - decline: `applyAgingDecline` guards on `age >= 50` and runs
+            //     BEFORE the increment, so the displayed age is the one it
+            //     tests. `decliningCoaches`' own `>= 50` needs no adjustment.
+            //   - retirement: `WeekAdvancer` filters `coach.age >= 65` AFTER
+            //     the increment, so a man printed here at 64 is 65 by the time
+            //     it looks and rolls at `Double(65 - 64) * 0.15`. The display
+            //     gate is therefore 64, not 65 — at 65 it silently omitted the
+            //     youngest man who can actually walk.
+            let retirees = agers.filter { $0.age >= 64 }
             let agerNames: [String] = agers.map { coach in
                 let name: String = coach.fullName
                 return "\(name) (\(coach.age))"
