@@ -1286,7 +1286,7 @@ enum PlayerDevelopmentEngine {
         switch position {
         case .RB, .WR, .TE, .DE, .DT, .OLB, .MLB, .CB, .FS, .SS:
             return true
-        case .QB, .FB, .LT, .LG, .C, .RG, .RT, .K, .P:
+        case .QB, .FB, .LT, .LG, .C, .RG, .RT, .K, .P, .LS, .H:
             return false
         }
     }
@@ -2299,6 +2299,14 @@ private extension PlayerDevelopmentEngine {
             a.kickPower = grown(a.kickPower)
             a.kickAccuracy = grown(a.kickAccuracy)
             player.positionAttributes = .kicking(a)
+        case .snapping(var a):
+            a.snapVelocity = grown(a.snapVelocity)
+            a.snapAccuracy = grown(a.snapAccuracy)
+            player.positionAttributes = .snapping(a)
+        case .holding(var a):
+            a.handling = grown(a.handling)
+            a.placement = grown(a.placement)
+            player.positionAttributes = .holding(a)
         }
     }
 
@@ -2405,6 +2413,14 @@ private extension PlayerDevelopmentEngine {
             a.kickPower = hit(0, a.kickPower)
             a.kickAccuracy = hit(1, a.kickAccuracy)
             player.positionAttributes = .kicking(a)
+        case .snapping(var a):
+            a.snapVelocity = hit(0, a.snapVelocity)
+            a.snapAccuracy = hit(1, a.snapAccuracy)
+            player.positionAttributes = .snapping(a)
+        case .holding(var a):
+            a.handling = hit(0, a.handling)
+            a.placement = hit(1, a.placement)
+            player.positionAttributes = .holding(a)
         }
     }
 

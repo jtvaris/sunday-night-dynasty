@@ -549,7 +549,11 @@ struct FantasyDraftView: View {
             ("DL", total([.DE, .DT])),
             ("LB", total([.OLB, .MLB])),
             ("DB", total([.CB, .FS, .SS])),
-            ("K/P", total([.K, .P]))
+            ("K/P", total([.K, .P])),
+            // Its own row rather than folded into K/P: the four rows have to
+            // sum to the 53 the draft actually seats, and "K/P" would then be
+            // counting two men it does not name.
+            ("LS/H", total([.LS, .H]))
         ]
     }
 

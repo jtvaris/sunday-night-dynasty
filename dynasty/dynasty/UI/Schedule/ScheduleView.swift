@@ -18,8 +18,9 @@ enum TeamStrength {
     /// The slots that make up "the starting lineup": the depth chart's 12
     /// offensive and 10 defensive slots.
     ///
-    /// Special teams are deliberately excluded. `K`/`P` are not part of the
-    /// 22 men who decide a matchup and their ratings sit in a different band,
+    /// Special teams are deliberately excluded. `K`/`P`/`LS`/`H` are not part
+    /// of the 22 men who decide a matchup and their ratings sit in a different
+    /// band — a long snapper's OVR is a grade on snapping —
     /// so folding them in drags every club down by a couple of points; `KR`/`PR`
     /// re-count a receiver or back who is already in the offensive eleven, so
     /// they double-weight one player. Averaging exactly these 22 slots also

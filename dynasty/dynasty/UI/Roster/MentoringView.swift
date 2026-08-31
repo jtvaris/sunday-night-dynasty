@@ -677,7 +677,7 @@ struct MentoringView: View {
         case .DE, .DT:               return 4
         case .OLB, .MLB:             return 5
         case .CB, .FS, .SS:          return 6
-        case .K, .P:                 return 7
+        case .K, .P, .LS, .H:        return 7
         }
     }
 

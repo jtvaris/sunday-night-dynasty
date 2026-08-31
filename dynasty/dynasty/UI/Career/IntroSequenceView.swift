@@ -615,14 +615,16 @@ private struct TeamOverviewStep: View {
         case .DE, .DT: return "DL"
         case .OLB, .MLB: return "LB"
         case .CB, .FS, .SS: return "DB"
-        case .K, .P: return "ST"
+        case .K, .P, .LS, .H: return "ST"
         }
     }
 
     /// Ideal minimum roster counts per position group.
     private static let idealGroupSize: [String: Int] = [
         "QB": 3, "RB": 4, "WR": 6, "TE": 3, "OL": 9,
-        "DL": 6, "LB": 6, "DB": 8, "ST": 2
+        // ST is 4, not 2: the blueprint seats a kicker, a punter, a long
+        // snapper and a holder, so a club at 2 really is two men short.
+        "DL": 6, "LB": 6, "DB": 8, "ST": 4
     ]
 
     private static func needLabel(groupName: String, count: Int, avg: Int) -> String {
@@ -647,7 +649,7 @@ private struct TeamOverviewStep: View {
         ("DL", [.DE, .DT]),
         ("LB", [.OLB, .MLB]),
         ("DB", [.CB, .FS, .SS]),
-        ("ST", [.K, .P]),
+        ("ST", [.K, .P, .LS, .H]),
     ]
 
     private var positionGroupGrades: [PositionGroupGrade] {

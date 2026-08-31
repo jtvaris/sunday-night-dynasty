@@ -261,6 +261,16 @@ enum CareerScenarioApplier {
                 kickPower: shift(k.kickPower, delta),
                 kickAccuracy: shift(k.kickAccuracy, delta)
             ))
+        case .snapping(let s):
+            player.positionAttributes = .snapping(SnapAttributes(
+                snapVelocity: shift(s.snapVelocity, delta),
+                snapAccuracy: shift(s.snapAccuracy, delta)
+            ))
+        case .holding(let h):
+            player.positionAttributes = .holding(HoldAttributes(
+                handling: shift(h.handling, delta),
+                placement: shift(h.placement, delta)
+            ))
         }
     }
 }

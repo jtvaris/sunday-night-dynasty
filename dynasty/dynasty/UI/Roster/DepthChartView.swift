@@ -163,6 +163,7 @@ struct DepthChartView: View {
         case .specialTeams:
             return [
                 SlotGroup(id: "Kickers", name: "Kickers & Punters", icon: "sportscourt", slots: [.K, .P]),
+                SlotGroup(id: "Operation", name: "Snap & Hold", icon: "hand.raised.fill", slots: [.LS, .H]),
                 SlotGroup(id: "Returners", name: "Returners", icon: "arrow.uturn.backward", slots: [.KR, .PR]),
             ]
         }
@@ -197,6 +198,10 @@ struct DepthChartView: View {
     /// left out of this one too, and deliberately: KR and PR are ranked on
     /// speed and agility, so averaging their OVR in would quote a number
     /// neither slot uses. Their rows carry SPD/AGI instead.
+    ///
+    /// The long snapper and the holder are out of it for the same reason the
+    /// pill is labelled K/P: their overall is a grade on snapping and holding,
+    /// two things a kicking number has no business averaging in.
     private var kickingOVR: Int {
         TeamStrength.ovr(chart: depthChart, slots: [.K, .P], lookup: playerLookup)
     }

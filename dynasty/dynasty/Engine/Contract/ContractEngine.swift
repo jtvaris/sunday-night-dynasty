@@ -531,7 +531,7 @@ enum ContractEngine {
             return 0.6    // RBs devalued but not free: ~4.5-6.5%
         case .FB:
             return 0.25   // FB: ~1-2%
-        case .K, .P:
+        case .K, .P, .LS, .H:
             return 0.25   // Specialists: ~1-2%
         }
     }
@@ -877,7 +877,7 @@ enum ContractEngine {
         case .WR, .CB, .DE, .DT, .RT,
              .LG, .RG, .C:               return 1.00
         case .MLB, .OLB, .FS, .SS, .TE,
-             .K, .P:                     return 1.15
+             .K, .P, .LS, .H:            return 1.15
         case .RB, .FB:                   return 1.35
         }
     }
@@ -911,7 +911,7 @@ enum ContractEngine {
         case .DE, .LT, .WR, .CB:         return 1.10
         case .DT, .OLB, .MLB, .TE,
              .FS, .SS, .RT, .LG, .RG, .C: return 1.00
-        case .RB, .FB, .K, .P:           return 0.70
+        case .RB, .FB, .K, .P, .LS, .H:  return 0.70
         }
     }
 
@@ -2328,6 +2328,10 @@ enum ContractEngine {
         case .linebacker(_):      return .OLB  // Use OLB as the premium LB position
         case .defensiveBack(_):   return .CB   // Use CB as the premium DB position
         case .kicking(_):         return .K
+        // Neither collapses into a bigger group: the snap and the hold are the
+        // only jobs those payloads describe, so each is its own premium.
+        case .snapping(_):        return .LS
+        case .holding(_):         return .H
         }
     }
 
@@ -2352,6 +2356,8 @@ enum ContractEngine {
         case .OLB, .MLB:             return .OLB
         case .CB, .FS, .SS:          return .CB
         case .K, .P:                 return .K
+        case .LS:                    return .LS
+        case .H:                     return .H
         }
     }
 

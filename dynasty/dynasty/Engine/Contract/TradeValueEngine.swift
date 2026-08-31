@@ -135,7 +135,7 @@ enum TradeValueEngine {
         case .LG, .RG, .C:      return 0.95
         case .RB:               return 0.85
         case .FB:               return 0.6
-        case .K, .P:            return 0.5
+        case .K, .P, .LS, .H:   return 0.5
         }
     }
 
@@ -155,7 +155,7 @@ enum TradeValueEngine {
         case .OLB, .MLB:                declineStart = 28; declinePerYear = 0.09
         case .CB:                       declineStart = 28; declinePerYear = 0.12
         case .FS, .SS:                  declineStart = 28; declinePerYear = 0.10
-        case .K, .P:                    declineStart = 36; declinePerYear = 0.04
+        case .K, .P, .LS, .H:           declineStart = 36; declinePerYear = 0.04
         }
 
         if age > declineStart {

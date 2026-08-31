@@ -219,6 +219,13 @@ enum SeasonStatSynthesizer {
             // count barely moves with OVR; the average is where skill shows.
             line.punts = max(0, round(52.0 * Double(gp) / 17.0 * jitter(0.80...1.20, &rng)))
             line.puntAverage = (interpolate(ovr, punterAverage) * jitter(0.98...1.02, &rng) * 10).rounded() / 10
+
+        case .LS, .H:
+            // Nothing to synthesize. `SeasonStatLine` has no snap-quality or
+            // hold column, and the two jobs move no counter that does exist —
+            // a fabricated tackle total would be the invention this synthesizer
+            // is careful not to make.
+            break
         }
 
         return line

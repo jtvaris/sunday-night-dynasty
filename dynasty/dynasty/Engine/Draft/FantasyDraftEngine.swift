@@ -25,13 +25,13 @@ enum FantasyDraftEngine {
     static let interactiveRounds = 25
 
     /// Positional targets mirroring `LeagueGenerator.rosterBlueprint`
-    /// (including the three extra-depth slots: WR 7, DE 5, CB 6). Sums to 53.
+    /// (including its one extra-depth slot, the nickel corner: CB 6). Sums to 53.
     static let targetCounts: [Position: Int] = [
-        .QB: 3, .RB: 3, .FB: 1, .WR: 7, .TE: 3,
+        .QB: 3, .RB: 3, .FB: 1, .WR: 6, .TE: 3,
         .LT: 2, .LG: 2, .C: 2, .RG: 2, .RT: 1,
-        .DE: 5, .DT: 3, .OLB: 4, .MLB: 3,
+        .DE: 4, .DT: 3, .OLB: 4, .MLB: 3,
         .CB: 6, .FS: 2, .SS: 2,
-        .K: 1, .P: 1
+        .K: 1, .P: 1, .LS: 1, .H: 1
     ]
 
     // MARK: - Pool Entry
@@ -231,7 +231,11 @@ enum FantasyDraftEngine {
         case .FS, .SS, .TE:  topOfMarket = 16_000
         case .LG, .RG, .C:   topOfMarket = 16_000
         case .RB:            topOfMarket = 14_000
-        case .K, .P:         topOfMarket = 6_000
+        // One specialist rung, the one that already exists. The snapper and the
+        // holder are priced with the kicker and the punter everywhere else in
+        // the market (`ContractEngine.positionMultiplier`), and a rung of their
+        // own here would be a number nothing else in the game agrees with.
+        case .K, .P, .LS, .H: topOfMarket = 6_000
         case .FB:            topOfMarket = 4_000
         }
 

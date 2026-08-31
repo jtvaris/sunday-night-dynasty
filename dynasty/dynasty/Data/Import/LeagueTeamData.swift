@@ -201,7 +201,7 @@ enum LeagueTeamData {
         ("DL", [.DE, .DT]),
         ("LB", [.OLB, .MLB]),
         ("DB", [.CB, .FS, .SS]),
-        ("ST", [.K, .P]),
+        ("ST", [.K, .P, .LS, .H]),
     ]
 
     /// Group label for a position, or `nil` if the position is in no group.

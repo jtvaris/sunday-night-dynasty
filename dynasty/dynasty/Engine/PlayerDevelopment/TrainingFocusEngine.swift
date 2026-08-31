@@ -22,6 +22,10 @@ enum TrainingFocusArea: String, Codable, CaseIterable, Identifiable {
     case ballSkills      = "Ball Skills"
     case tackling        = "Tackling"
     case kickingCraft    = "Kicking Craft"
+    /// The snap-and-hold half of the field-goal operation. Its own area rather
+    /// than a second job for Kicking Craft: a long snapper put on a drill
+    /// captioned "Kicking Craft" would be a caption lying about what he did.
+    case operationCraft  = "Snap & Hold"
     case conditioning    = "Conditioning"
     case filmStudy       = "Film Study"
 
@@ -39,6 +43,7 @@ enum TrainingFocusArea: String, Codable, CaseIterable, Identifiable {
         case .passRush, .runDefense, .tackling:       return "bolt.fill"
         case .coverage, .ballSkills:                  return "eye.fill"
         case .kickingCraft:                           return "figure.kickboxing"
+        case .operationCraft:                         return "sportscourt"
         case .conditioning:                           return "figure.strengthtraining.traditional"
         case .filmStudy:                              return "play.rectangle.fill"
         }
@@ -58,6 +63,7 @@ enum TrainingFocusArea: String, Codable, CaseIterable, Identifiable {
         case .OLB, .MLB:                specific = [.tackling, .coverage, .passRush]
         case .CB, .FS, .SS:             specific = [.coverage, .ballSkills]
         case .K, .P:                    specific = [.kickingCraft]
+        case .LS, .H:                   specific = [.operationCraft]
         }
         return specific + [.conditioning, .filmStudy]
     }
@@ -658,6 +664,24 @@ enum TrainingFocusEngine {
             ]
             guard let name = bump(&k, options, cap: cap) else { return nil }
             player.positionAttributes = .kicking(k)
+            return name
+
+        case .snapping(var s):
+            guard area == .operationCraft else { return nil }
+            let options: [(String, WritableKeyPath<SnapAttributes, Int>)] = [
+                ("Snap Velocity", \.snapVelocity), ("Snap Accuracy", \.snapAccuracy)
+            ]
+            guard let name = bump(&s, options, cap: cap) else { return nil }
+            player.positionAttributes = .snapping(s)
+            return name
+
+        case .holding(var h):
+            guard area == .operationCraft else { return nil }
+            let options: [(String, WritableKeyPath<HoldAttributes, Int>)] = [
+                ("Handling", \.handling), ("Placement", \.placement)
+            ]
+            guard let name = bump(&h, options, cap: cap) else { return nil }
+            player.positionAttributes = .holding(h)
             return name
         }
     }

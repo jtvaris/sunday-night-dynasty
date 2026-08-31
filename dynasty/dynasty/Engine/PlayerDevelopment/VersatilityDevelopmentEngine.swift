@@ -919,7 +919,7 @@ enum VersatilityDevelopmentEngine {
 
     /// Which attribute block a position is graded on.
     private enum AttributeFamily {
-        case qb, wr, rb, te, ol, dl, lb, db, kick
+        case qb, wr, rb, te, ol, dl, lb, db, kick, snap, hold
     }
 
     private static func attributeFamily(of position: Position) -> AttributeFamily {
@@ -933,6 +933,13 @@ enum VersatilityDevelopmentEngine {
         case .OLB, .MLB:                return .lb
         case .CB, .FS, .SS:             return .db
         case .K, .P:                    return .kick
+        // Three separate families, not one. There is no shared grading sheet
+        // between kicking a ball, snapping one and spotting one, so a move
+        // between them is a cross-family conversion and falls to the
+        // no-explicit-map branch below — which is right: none of the three
+        // transfers to either of the others.
+        case .LS:                       return .snap
+        case .H:                        return .hold
         }
     }
 
@@ -1015,6 +1022,14 @@ enum VersatilityDevelopmentEngine {
             case .kicking(let a):
                 return .kicking(KickingAttributes(
                     kickPower: t(a.kickPower), kickAccuracy: t(a.kickAccuracy)
+                ))
+            case .snapping(let a):
+                return .snapping(SnapAttributes(
+                    snapVelocity: t(a.snapVelocity), snapAccuracy: t(a.snapAccuracy)
+                ))
+            case .holding(let a):
+                return .holding(HoldAttributes(
+                    handling: t(a.handling), placement: t(a.placement)
                 ))
             }
         }

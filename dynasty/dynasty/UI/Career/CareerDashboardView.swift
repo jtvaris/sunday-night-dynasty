@@ -4344,7 +4344,7 @@ struct CareerDashboardView: View {
             ("DL", [.DE, .DT]),
             ("LB", [.OLB, .MLB]),
             ("DB", [.CB, .FS, .SS]),
-            ("ST", [.K, .P]),
+            ("ST", [.K, .P, .LS, .H]),
         ]
 
         var results: [(group: String, starterGrade: String, depthGrade: String, starterOVR: Int, depthOVR: Int)] = []

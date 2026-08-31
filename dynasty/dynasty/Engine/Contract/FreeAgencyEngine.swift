@@ -1108,7 +1108,7 @@ enum FreeAgencyEngine {
         case .QB, .DE, .CB, .WR, .LT:           return 1.0
         case .DT, .OLB, .MLB, .FS, .SS, .TE:    return 0.8
         case .RB, .RG, .LG, .C, .RT, .FB:       return 0.6
-        case .K, .P:                            return 0.3
+        case .K, .P, .LS, .H:                   return 0.3
         }
     }
 
@@ -2886,6 +2886,11 @@ enum FreeAgencyEngine {
         case .FS, .SS:              return ([.FS, .SS], 3)
         case .K:                     return ([.K], 1)
         case .P:                     return ([.P], 1)
+        // Four rooms of one, not one room of four: a club short a snapper
+        // cannot cover the hole with its punter, so each has to be its own
+        // deficit or the market never signs one.
+        case .LS:                    return ([.LS], 1)
+        case .H:                     return ([.H], 1)
         }
     }
 

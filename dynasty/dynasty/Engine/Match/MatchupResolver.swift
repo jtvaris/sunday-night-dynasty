@@ -97,7 +97,8 @@ extension SimPlayer {
         let seed = Int(bytes.0) << 8 | Int(bytes.1)
         let range: ClosedRange<Int>
         switch position {
-        case .QB, .K, .P:      range = 1...19
+        case .QB, .K, .P, .H:  range = 1...19
+        case .LS:              range = 40...59
         case .RB, .FB:         range = 20...49
         case .WR:              range = 80...89
         case .TE:              range = 80...89

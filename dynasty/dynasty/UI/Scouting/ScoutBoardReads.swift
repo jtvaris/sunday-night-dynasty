@@ -39,14 +39,14 @@ struct ScoutBoardReads {
     //
     // Declared once. `BigBoardView.needLevel(for:)` and the depth rows below
     // both measure a hole as `ideal - onRoster`, and they used to carry two
-    // hand-copied tables of the same 19 numbers.
+    // hand-copied tables of the same 21 numbers.
 
     /// A league-typical count at each position on a 53-man roster.
     static let idealRosterCounts: [Position: Int] = [
         .QB: 2, .RB: 3, .FB: 1, .WR: 5, .TE: 3,
         .LT: 2, .LG: 2, .C: 2, .RG: 2, .RT: 2,
         .DE: 4, .DT: 3, .OLB: 4, .MLB: 2,
-        .CB: 5, .FS: 2, .SS: 2, .K: 1, .P: 1
+        .CB: 5, .FS: 2, .SS: 2, .K: 1, .P: 1, .LS: 1, .H: 1
     ]
 
     /// The ideal count for one position, with the same default (2) both old
@@ -395,7 +395,7 @@ struct ScoutBoardReads {
         case .DE, .DT: return "DL"
         case .OLB, .MLB: return "LB"
         case .CB, .FS, .SS: return "DB"
-        case .K, .P: return "ST"
+        case .K, .P, .LS, .H: return "ST"
         }
     }
 }

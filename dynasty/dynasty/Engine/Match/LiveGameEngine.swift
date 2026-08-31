@@ -69,7 +69,7 @@ enum LineupGroup: String, CaseIterable, Identifiable {
         case .DE, .DT:               self = .defensiveLine
         case .OLB, .MLB:             self = .linebackers
         case .CB, .FS, .SS:          self = .secondary
-        case .K, .P:                 self = .specialists
+        case .K, .P, .LS, .H:        self = .specialists
         }
     }
 
@@ -344,7 +344,10 @@ final class LiveGameEngine: ObservableObject {
         case .DE, .DT:               return [.passRush, .runDefense]
         case .OLB, .MLB:             return [.runDefense, .coverage, .passRush]
         case .CB, .FS, .SS:          return [.coverage, .runDefense]
-        case .K, .P:                 return []
+        // No matchup category is scored on a kick, a snap or a hold, so the
+        // board shows these four men nothing rather than a category they can
+        // never win or lose.
+        case .K, .P, .LS, .H:        return []
         }
     }
 

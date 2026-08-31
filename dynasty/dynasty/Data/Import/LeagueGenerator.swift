@@ -5,14 +5,26 @@ enum LeagueGenerator {
     // MARK: - Roster Blueprint
 
     /// Position counts for a standard 53-man roster.
+    ///
+    /// The snapper and the holder are seeded here, not improvised at kickoff.
+    /// They are the only two jobs on the field with no fallback body — a guard
+    /// cannot snap fifteen yards and a receiver cannot spin the laces — so a
+    /// roster that does not carry them does not have them, and `sync_sources.sh`
+    /// asserts this table still sums to 53.
+    ///
+    /// The two seats came out of the extra-depth block rather than off the top:
+    /// the seventh receiver and the fifth end were the two most marginal bodies
+    /// in the old 53 (WR 6+1, DE 4+1 against a league-typical 6 and 4), and
+    /// cutting them leaves every starting group and every backup rung intact.
+    /// The sixth corner stays, because nickel is a starting job here.
     private static let rosterBlueprint: [(Position, Int)] = [
         (.QB, 3), (.RB, 3), (.FB, 1), (.WR, 6), (.TE, 3),
         (.LT, 2), (.LG, 2), (.C, 2), (.RG, 2), (.RT, 1),
         (.DE, 4), (.DT, 3), (.OLB, 4), (.MLB, 3),
         (.CB, 5), (.FS, 2), (.SS, 2),
-        (.K, 1), (.P, 1),
+        (.K, 1), (.P, 1), (.LS, 1), (.H, 1),
         // Extra depth
-        (.WR, 1), (.DE, 1), (.CB, 1)
+        (.CB, 1)
     ]
     // Total: 3+3+1+6+3+2+2+2+2+1+4+3+4+3+5+2+2+1+1+1+1+1 = 53
 
@@ -2034,7 +2046,7 @@ enum LeagueGenerator {
             return 21...33
         case .FS, .SS:
             return 22...33
-        case .K, .P:
+        case .K, .P, .LS, .H:
             return 22...40
         }
     }
@@ -2421,14 +2433,14 @@ enum LeagueGenerator {
     ) {
         // Determine the appropriate scheme pool based on position side.
         // Offense and defense players generally only learn schemes for their side;
-        // special teams (K/P) and FB are exposed to either, so we pick from both.
+        // special teams (K/P/LS/H) and FB are exposed to either, so we pick from both.
         let schemes: [String]
         switch player.position {
         case .QB, .RB, .WR, .TE, .LT, .LG, .C, .RG, .RT:
             schemes = OffensiveScheme.allCases.map { $0.rawValue }
         case .DE, .DT, .OLB, .MLB, .CB, .FS, .SS:
             schemes = DefensiveScheme.allCases.map { $0.rawValue }
-        case .K, .P, .FB:
+        case .K, .P, .LS, .H, .FB:
             schemes = OffensiveScheme.allCases.map { $0.rawValue }
                 + DefensiveScheme.allCases.map { $0.rawValue }
         }
@@ -2691,6 +2703,18 @@ enum LeagueGenerator {
             return .kicking(KickingAttributes(
                 kickPower: rndAttr(depthIndex, ageShift),
                 kickAccuracy: rndAttr(depthIndex, ageShift)
+            ))
+
+        case .LS:
+            return .snapping(SnapAttributes(
+                snapVelocity: rndAttr(depthIndex, ageShift),
+                snapAccuracy: rndAttr(depthIndex, ageShift)
+            ))
+
+        case .H:
+            return .holding(HoldAttributes(
+                handling: rndAttr(depthIndex, ageShift),
+                placement: rndAttr(depthIndex, ageShift)
             ))
         }
     }

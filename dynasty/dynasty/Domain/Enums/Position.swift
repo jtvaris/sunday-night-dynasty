@@ -63,6 +63,13 @@ enum Position: String, Codable, CaseIterable, Identifiable {
     case SS  = "SS"
     case K   = "K"
     case P   = "P"
+    /// Long snapper. A distinct job with no natural fallback — the centre who
+    /// snaps for a field goal is not the man who snaps 15 yards on a punt — so
+    /// he is a roster Position with his own blueprint slot and depth-chart
+    /// seat, not a label hung on somebody else's card.
+    case LS  = "LS"
+    /// Holder. Catches the long snap and spots the ball for the kicker.
+    case H   = "H"
 
     var id: String { rawValue }
 
@@ -72,7 +79,7 @@ enum Position: String, Codable, CaseIterable, Identifiable {
             return .offense
         case .DE, .DT, .OLB, .MLB, .CB, .FS, .SS:
             return .defense
-        case .K, .P:
+        case .K, .P, .LS, .H:
             return .specialTeams
         }
     }
@@ -80,7 +87,7 @@ enum Position: String, Codable, CaseIterable, Identifiable {
     /// How this position ages once it is past its peak window
     /// (`docs/DEVELOPMENT_NFL_REFERENCE.md` §1, plan §2.8). Consumed by
     /// `PlayerDevelopmentEngine.applyAgeRegression`, which used one generic
-    /// table for all 19 positions — so a 30-year-old corner decayed at exactly
+    /// table for all 21 positions — so a 30-year-old corner decayed at exactly
     /// the rate of a 30-year-old left tackle, which is the opposite of what the
     /// PFF/EPA aging curves show.
     var declineProfile: DeclineProfile {
@@ -90,7 +97,7 @@ enum Position: String, Codable, CaseIterable, Identifiable {
         case .RB, .CB:
             return .cliff
         // Technique and processing offset athletic loss; longest careers.
-        case .QB, .LT, .LG, .C, .RG, .RT, .K, .P:
+        case .QB, .LT, .LG, .C, .RG, .RT, .K, .P, .LS, .H:
             return .glide
         // Everyone else decays at the historical generic rate.
         case .FB, .WR, .TE, .DE, .DT, .OLB, .MLB, .FS, .SS:
@@ -118,7 +125,10 @@ enum Position: String, Codable, CaseIterable, Identifiable {
             return 25...30
         case .FS, .SS:
             return 26...31
-        case .K, .P:
+        // The four specialist jobs age the same way: the skill is technique and
+        // repetition, and a snapper or a holder who can still do it at 36 keeps
+        // doing it.
+        case .K, .P, .LS, .H:
             return 28...38
         }
     }

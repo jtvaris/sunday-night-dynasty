@@ -247,7 +247,7 @@ struct RosterView: View {
     ]
 
     static let specialTeamsGroups: [PositionGroup] = [
-        PositionGroup(name: "Specialists", positions: [.K, .P]),
+        PositionGroup(name: "Specialists", positions: [.K, .P, .LS, .H]),
     ]
 
     /// Offense → defense → specialists, in one list. Shared (rather than

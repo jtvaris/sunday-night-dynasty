@@ -137,7 +137,7 @@ enum GMTaste {
             case .DE, .DT:                  return .defensiveLine
             case .OLB, .MLB:                return .linebackers
             case .CB, .FS, .SS:             return .secondary
-            case .QB, .K, .P:               return nil
+            case .QB, .K, .P, .LS, .H:      return nil
             }
         }
     }

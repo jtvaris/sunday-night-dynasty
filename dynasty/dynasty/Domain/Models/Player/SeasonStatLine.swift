@@ -164,6 +164,9 @@ extension SeasonStatLine {
         case .CB, .FS, .SS:          return (tackles, defInts, passesDefended)
         case .K:                     return (fieldGoalsMade, fieldGoalsAttempted, 0)
         case .P:                     return (punts, Int(puntAverage.rounded()), 0)
+        // Nothing in the line counts a snap or a hold; three zeros is the true
+        // answer, and it is what the career table prints for them too.
+        case .LS, .H:                return (0, 0, 0)
         }
     }
 }

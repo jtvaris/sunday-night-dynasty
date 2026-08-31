@@ -677,6 +677,8 @@ enum ProspectFog {
         case .linebacker:     return ["TKL", "ZCV", "MCV", "BLZ"]
         case .defensiveBack:  return ["MCV", "ZCV", "PRS", "BSK"]
         case .kicking:        return ["PWR", "ACC"]
+        case .snapping:       return ["VEL", "SNP"]
+        case .holding:        return ["HND", "PLC"]
         }
     }
 

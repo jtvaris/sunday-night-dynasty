@@ -1611,6 +1611,12 @@ struct PlayerDetailView: View {
                         seasonQuickStat(label: "Punts", value: "\(line.punts)")
                         quickStatDivider
                         seasonQuickStat(label: "Avg", value: String(format: "%.1f", line.puntAverage))
+
+                    case .LS, .H:
+                        // Nothing counts a snap or a hold, so games played and
+                        // games started above are the whole honest season line.
+                        // Better an empty row than a manufactured one.
+                        EmptyView()
                     }
                 }
                 .padding(.vertical, 6)
@@ -3413,6 +3419,18 @@ struct PlayerDetailView: View {
                     ("Kick Power", a.kickPower), ("Kick Accuracy", a.kickAccuracy),
                 ])
             }
+        case .snapping(let a):
+            DSDetailCard("Snapping Skills", icon: "sportscourt") {
+                attributeGrid([
+                    ("Snap Velocity", a.snapVelocity), ("Snap Accuracy", a.snapAccuracy),
+                ])
+            }
+        case .holding(let a):
+            DSDetailCard("Holding Skills", icon: "hand.raised.fill") {
+                attributeGrid([
+                    ("Handling", a.handling), ("Placement", a.placement),
+                ])
+            }
         }
     }
 
@@ -3757,6 +3775,8 @@ struct PlayerDetailView: View {
         case .CB, .FS, .SS: return "Secondary"
         case .K: return "Kicking"
         case .P: return "Punting"
+        case .LS: return "Long Snapping"
+        case .H: return "Holding"
         }
     }
 

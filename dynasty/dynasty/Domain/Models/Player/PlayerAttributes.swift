@@ -153,6 +153,37 @@ nonisolated struct KickingAttributes: Codable, Equatable {
     }
 }
 
+/// What a long snapper is graded on.
+///
+/// Deliberately NOT `KickingAttributes`. A snapper reusing the kicker's payload
+/// would print PWR / ACC — "Kick Power", "Kick Accuracy" — on the card of a man
+/// who never kicks, which is the same mislabelling that would grade a kicker as
+/// a guard. The two things a snapper is actually judged on are how fast the ball
+/// gets there and where it arrives.
+nonisolated struct SnapAttributes: Codable, Equatable {
+    /// Ball speed over the fifteen yards to the punter.
+    var snapVelocity: Int
+    /// Placement — into the hold, or into the punter's hands.
+    var snapAccuracy: Int
+
+    var overall: Double {
+        Double(snapVelocity + snapAccuracy) / 2.0
+    }
+}
+
+/// What a holder is graded on: catching whatever the snapper sends him and
+/// getting the ball down, upright and laces out, in about 1.3 seconds.
+nonisolated struct HoldAttributes: Codable, Equatable {
+    /// Fielding the snap clean — high, low or wide.
+    var handling: Int
+    /// Spot, tilt and laces once it is in his hands.
+    var placement: Int
+
+    var overall: Double {
+        Double(handling + placement) / 2.0
+    }
+}
+
 // MARK: - Position Attributes Enum
 
 nonisolated enum PositionAttributes: Codable, Equatable {
@@ -165,6 +196,8 @@ nonisolated enum PositionAttributes: Codable, Equatable {
     case linebacker(LBAttributes)
     case defensiveBack(DBAttributes)
     case kicking(KickingAttributes)
+    case snapping(SnapAttributes)
+    case holding(HoldAttributes)
 
     /// Average of the position-specific attribute fields (0-99 scale).
     var overall: Double {
@@ -178,6 +211,8 @@ nonisolated enum PositionAttributes: Codable, Equatable {
         case .linebacker(let a):     return a.overall
         case .defensiveBack(let a):  return a.overall
         case .kicking(let a):        return a.overall
+        case .snapping(let a):       return a.overall
+        case .holding(let a):        return a.overall
         }
     }
 }

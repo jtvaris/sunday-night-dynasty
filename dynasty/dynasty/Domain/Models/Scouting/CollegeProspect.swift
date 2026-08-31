@@ -872,6 +872,11 @@ final class CollegeProspect {
             let average = grossAverage + jitter() * 1.2
             return String(format: "%.1f yd avg · %d punts · %d inside-20",
                           average, usage(44, 78), rate(24))
+        case .LS, .H:
+            // The operation has no college box score anywhere in this model, so
+            // the line is the one number that IS derived — how much of it he
+            // handled — and nothing else.
+            return "\(careerStarts()) career starts · handled the operation"
         }
     }
 
@@ -921,7 +926,7 @@ final class CollegeProspect {
             return "\(prefix) · \(per(0.070)) tkl · \(per(0.020)) PD"
         case .FS, .SS:
             return "\(prefix) · \(per(0.100)) tkl · \(per(0.015)) PD"
-        case .K, .P:
+        case .K, .P, .LS, .H:
             // Specialists are excluded from the buried cohort by the generator;
             // this branch exists so the switch stays exhaustive.
             return "\(prefix) · backup duty"

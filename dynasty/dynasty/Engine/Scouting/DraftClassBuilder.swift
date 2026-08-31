@@ -1116,7 +1116,7 @@ enum DraftClassBuilder {
         case .WR, .DE, .DT, .LG, .RG:   positionShift = 0
         case .OLB, .MLB, .FS, .SS, .TE: positionShift = -4
         case .QB, .C:                   positionShift = -8
-        case .K, .P:                    positionShift = 0
+        case .K, .P, .LS, .H:           positionShift = 0
         }
         let raw = 35.0
             + Double(yearsStarted) * 9.0
@@ -1251,6 +1251,12 @@ enum DraftClassBuilder {
     /// member positions afterwards.
     enum PositionGroup: String, CaseIterable {
         case qb, rb, fb, wr, te, ot, iol, edge, dt, lb, cb, safety, kicker, punter
+        // The snapper and the holder are roster Positions with blueprint slots
+        // (`LeagueGenerator.rosterBlueprint`), so the class has to keep making
+        // them — a club whose snapper retires has nowhere else to find one, and
+        // a league that never mints another simply runs out over twenty years.
+        // They arrive the way they do in life: undrafted (``earliestBand``).
+        case longSnapper, holder
 
         /// Members with their relative weight inside the group.
         var memberWeights: [(Position, Double)] {
@@ -1269,6 +1275,8 @@ enum DraftClassBuilder {
             case .safety: return [(.FS, 0.514), (.SS, 0.486)]
             case .kicker: return [(.K, 1.0)]
             case .punter: return [(.P, 1.0)]
+            case .longSnapper: return [(.LS, 1.0)]
+            case .holder:      return [(.H, 1.0)]
             }
         }
 
@@ -1291,6 +1299,10 @@ enum DraftClassBuilder {
             case .safety: return 7.0
             case .kicker: return 0.9
             case .punter: return 0.9
+            // One roster slot apiece, same as the kicker and the punter, and
+            // the same annual attrition — so the same share.
+            case .longSnapper: return 0.9
+            case .holder:      return 0.9
             }
         }
 
@@ -1311,6 +1323,8 @@ enum DraftClassBuilder {
             case .safety: return 15...28
             case .kicker: return 3...6
             case .punter: return 3...6
+            case .longSnapper: return 3...6
+            case .holder:      return 3...6
             }
         }
 
@@ -1334,7 +1348,7 @@ enum DraftClassBuilder {
             case .lb:     return 2
             case .cb:     return 14
             case .safety: return 4.3
-            case .fb, .kicker, .punter: return 0
+            case .fb, .kicker, .punter, .longSnapper, .holder: return 0
             }
         }
 
@@ -1351,7 +1365,7 @@ enum DraftClassBuilder {
             case .lb:     return 0...2
             case .cb:     return 2...7
             case .safety: return 0...3
-            case .fb, .kicker, .punter: return 0...0
+            case .fb, .kicker, .punter, .longSnapper, .holder: return 0...0
             }
         }
 
@@ -1372,6 +1386,9 @@ enum DraftClassBuilder {
             case .cb:     return (0.30, 0.55)
             case .safety: return (0.30, 0.62)
             case .kicker, .punter: return (0.04, 0.96)
+            // Never on day 2 or day 3 — `earliestBand` zeroes both anyway, and
+            // stating it here keeps the two tables saying the same thing.
+            case .longSnapper, .holder: return (0.0, 0.0)
             }
         }
 
@@ -1391,7 +1408,21 @@ enum DraftClassBuilder {
             switch self {
             case .kicker, .punter: return 4
             case .fb:              return 4
+            // Band 8 is the UDFA pool (`bandSizes` is R1…R7 then UDFA), and
+            // that is where snappers and holders come from. No club in the
+            // modern game spends a pick on either.
+            case .longSnapper, .holder: return 8
             default:               return 1
+            }
+        }
+
+        /// Specialists sit at the back of any band they share with a starter.
+        /// Declared once here because `assignBands` sorts on it and the list had
+        /// to be re-typed on both sides of that comparison.
+        var sitsAtTheBackOfItsBand: Bool {
+            switch self {
+            case .kicker, .punter, .fb, .longSnapper, .holder: return true
+            default:                                           return false
             }
         }
 
@@ -1665,8 +1696,8 @@ enum DraftClassBuilder {
         tokens.sort { lhs, rhs in
             if lhs.desiredBand != rhs.desiredBand { return lhs.desiredBand < rhs.desiredBand }
             // Specialists sit at the back of any band they share.
-            let lhsSpecial = lhs.group == .kicker || lhs.group == .punter || lhs.group == .fb
-            let rhsSpecial = rhs.group == .kicker || rhs.group == .punter || rhs.group == .fb
+            let lhsSpecial = lhs.group.sitsAtTheBackOfItsBand
+            let rhsSpecial = rhs.group.sitsAtTheBackOfItsBand
             if lhsSpecial != rhsSpecial { return rhsSpecial }
             return Bool.random()
         }
@@ -1807,6 +1838,12 @@ enum DraftClassBuilder {
         case .K, .P:
             // power, accuracy
             return [-1.0, 1.0]
+        case .LS:
+            // snapVelocity, snapAccuracy
+            return [-1.0, 1.0]
+        case .H:
+            // handling, placement — both are technique, neither is a trait
+            return [1.0, 1.0]
         }
     }
 
@@ -1822,6 +1859,8 @@ enum DraftClassBuilder {
         case .OLB, .MLB:                return [0, 1]        // tackling, zone
         case .CB, .FS, .SS:             return [0, 3]        // man coverage, ball skills
         case .K, .P:                    return [1, 0]        // accuracy, power
+        case .LS:                       return [1, 0]        // snap accuracy, velocity
+        case .H:                        return [1, 0]        // placement, handling
         }
     }
 
@@ -1855,6 +1894,10 @@ enum DraftClassBuilder {
                 manCoverage: v(0), zoneCoverage: v(1), press: v(2), ballSkills: v(3)))
         case .K, .P:
             return .kicking(KickingAttributes(kickPower: v(0), kickAccuracy: v(1)))
+        case .LS:
+            return .snapping(SnapAttributes(snapVelocity: v(0), snapAccuracy: v(1)))
+        case .H:
+            return .holding(HoldAttributes(handling: v(0), placement: v(1)))
         }
     }
 }

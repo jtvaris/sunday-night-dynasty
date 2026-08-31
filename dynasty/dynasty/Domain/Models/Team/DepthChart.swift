@@ -42,6 +42,8 @@ enum DepthChartSlot: String, Codable, CaseIterable, Identifiable, Hashable {
     // Special Teams
     case K
     case P
+    case LS
+    case H
     case KR
     case PR
 
@@ -69,6 +71,8 @@ enum DepthChartSlot: String, Codable, CaseIterable, Identifiable, Hashable {
         case .SS:   return .SS
         case .K:    return .K
         case .P:    return .P
+        case .LS:   return .LS
+        case .H:    return .H
         case .KR:   return .RB  // KR can be any fast player but defaults to RB
         case .PR:   return .WR  // PR can be any agile player but defaults to WR
         }
@@ -102,6 +106,8 @@ enum DepthChartSlot: String, Codable, CaseIterable, Identifiable, Hashable {
         case .SS:   return "Strong Safety"
         case .K:    return "Kicker"
         case .P:    return "Punter"
+        case .LS:   return "Long Snapper"
+        case .H:    return "Holder"
         case .KR:   return "Kick Returner"
         case .PR:   return "Punt Returner"
         }
@@ -118,7 +124,7 @@ enum DepthChartSlot: String, Codable, CaseIterable, Identifiable, Hashable {
             return .offense
         case .LE, .RE, .DT1, .DT2, .LOLB, .MLB, .ROLB, .CB1, .CB2, .FS, .SS:
             return .defense
-        case .K, .P, .KR, .PR:
+        case .K, .P, .LS, .H, .KR, .PR:
             return .specialTeams
         }
     }
@@ -137,7 +143,7 @@ enum DepthChartSlot: String, Codable, CaseIterable, Identifiable, Hashable {
         case .LOLB, .MLB, .ROLB:        return 2
         case .CB1, .CB2:                 return 2
         case .FS, .SS:                   return 2
-        case .K, .P:                     return 1
+        case .K, .P, .LS, .H:            return 1
         case .KR, .PR:                   return 2
         }
     }
@@ -219,7 +225,7 @@ enum DepthChartSlot: String, Codable, CaseIterable, Identifiable, Hashable {
 
     /// Slots organized by special teams.
     static let specialTeamsSlots: [DepthChartSlot] = [
-        .K, .P, .KR, .PR
+        .K, .P, .LS, .H, .KR, .PR
     ]
 }
 

@@ -137,9 +137,17 @@ enum CampRosterEngine {
     /// 90-man August roster looks like. It is `LeagueGenerator.rosterBlueprint`
     /// (the 53) opened up where a camp actually works — receivers, corners, the
     /// two lines — and held nearly shut at the three positions where a camp body
-    /// is pure waste (QB, K, P). The sum is 94, comfortably above
-    /// ``campRosterTarget`` so no club is shape-locked short of its target, and
-    /// comfortably under ``rosterCeiling``.
+    /// is pure waste (QB, K, P). The sum is 98, comfortably above
+    /// ``campRosterTarget`` (87) so no club is shape-locked short of its target.
+    /// It is deliberately ABOVE ``rosterCeiling`` (90): the shape is a
+    /// per-position cap, not a roster size — the fill loop stops at the target
+    /// and the ceiling regardless — and a shape that only just cleared the
+    /// target is what left clubs one man short before #199.
+    ///
+    /// **94 → 98 (positions-st).** The long snapper and the holder are roster
+    /// Positions now, so a camp that could not carry a second one had no way to
+    /// bring in competition for either job. Two apiece, exactly like the kicker
+    /// and the punter, whose room this is.
     ///
     /// **86 → 94 (#199).** The shape is a per-position ceiling, so the *sum*
     /// minus a club's existing roster is the reachable headroom, and the old sum
@@ -154,7 +162,7 @@ enum CampRosterEngine {
         .LT: 3, .LG: 4, .C: 3, .RG: 4, .RT: 3,
         .DE: 8, .DT: 7, .OLB: 7, .MLB: 5,
         .CB: 10, .FS: 4, .SS: 4,
-        .K: 2, .P: 2
+        .K: 2, .P: 2, .LS: 2, .H: 2
     ]
 
     /// What a camp invite pays: the league minimum at this club's cap, read from

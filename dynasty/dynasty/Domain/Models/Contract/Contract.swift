@@ -342,7 +342,9 @@ enum IncentiveCategory: String, Codable, CaseIterable, Identifiable {
             return [.interceptions, .tackles, .gamesPlayed, .playoffBerth]
         case .K:
             return [.fieldGoals, .gamesPlayed, .playoffBerth]
-        case .P:
+        case .P, .LS, .H:
+            // Same reason as the line: no source in the sim counts what either
+            // of them does, so availability is the whole clause menu.
             return [.gamesPlayed, .playoffBerth]
         }
     }

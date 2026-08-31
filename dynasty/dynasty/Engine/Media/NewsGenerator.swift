@@ -674,6 +674,9 @@ enum NewsGenerator {
         case .K:                       return -7
         case .LT, .LG, .C, .RG, .RT:   return -10
         case .P:                       return -13
+        // Nothing in the box score can hand either of them this award, so they
+        // sit below the punter rather than at the same odds.
+        case .LS, .H:                  return -16
         }
     }
 

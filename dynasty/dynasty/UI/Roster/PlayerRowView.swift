@@ -615,6 +615,10 @@ struct PlayerRowView: View {
             }
         case .kicking(let a):
             return [(a.kickPower, "PWR"), (a.kickAccuracy, "ACC")]
+        case .snapping(let a):
+            return [(a.snapVelocity, "VEL"), (a.snapAccuracy, "SNP")]
+        case .holding(let a):
+            return [(a.handling, "HND"), (a.placement, "PLC")]
         }
     }
 

@@ -426,6 +426,11 @@ enum LeagueTemplateImporter {
         case .OLB, .MLB:                return Array(1...59) + Array(90...99)
         case .CB, .FS, .SS:             return Array(1...49)
         case .K, .P:                    return Array(1...49) + Array(90...99)
+        // The 2023 rule puts the long snapper in the line's band (he is one on
+        // every snap he takes); the holder wears a skill number like the punter
+        // or backup quarterback he usually is.
+        case .LS:                       return Array(40...49) + Array(50...59)
+        case .H:                        return Array(1...49) + Array(90...99)
         }
     }
 

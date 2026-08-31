@@ -73,7 +73,7 @@ struct LockerRoomView: View {
             ("offense_line",  "Offensive Line",  "shield.lefthalf.filled",  [.LT, .LG, .C, .RG, .RT]),
             ("defense_front", "Defensive Front", "shield.fill",             [.DE, .DT, .OLB, .MLB]),
             ("defense_back",  "Secondary",       "eye.fill",                [.CB, .FS, .SS]),
-            ("special_teams", "Special Teams",   "figure.kickboxing",       [.K, .P])
+            ("special_teams", "Special Teams",   "figure.kickboxing",       [.K, .P, .LS, .H])
         ]
 
         return groups.compactMap { group in

@@ -201,7 +201,7 @@ enum MilestoneTracker {
             productionShare = facts.sacks / 100
         case .CB, .FS, .SS:
             productionShare = Double(facts.defInts) / 40
-        case .LT, .LG, .C, .RG, .RT, .K, .P:
+        case .LT, .LG, .C, .RG, .RT, .K, .P, .LS, .H:
             // No counting stat the game tracks makes a case at these spots, so
             // the peak/longevity half is the whole story.
             productionShare = 0
@@ -332,7 +332,7 @@ enum MilestoneTracker {
                             milestones: [100, 200, 300, 400],
                             isFractional: false) { Double($0.fieldGoalsMade) },
             ]
-        case .LT, .LG, .C, .RG, .RT, .P:
+        case .LT, .LG, .C, .RG, .RT, .P, .LS, .H:
             return []
         }
     }
@@ -524,7 +524,7 @@ enum MilestoneTracker {
             return String(format: "%.1f career sacks", facts.sacks)
         case .CB, .FS, .SS:
             return "\(facts.defInts) career interceptions"
-        case .LT, .LG, .C, .RG, .RT, .K, .P:
+        case .LT, .LG, .C, .RG, .RT, .K, .P, .LS, .H:
             return "\(facts.seasons) seasons of starter-level play"
         }
     }

@@ -671,7 +671,7 @@ extension LockerRoomEngine {
         ("offense_line",  "Offensive Line",  "shield.lefthalf.filled",  [.LT, .LG, .C, .RG, .RT]),
         ("defense_front", "Defensive Front", "shield.fill",             [.DE, .DT, .OLB, .MLB]),
         ("defense_back",  "Secondary",       "eye.fill",                [.CB, .FS, .SS]),
-        ("special_teams", "Special Teams",   "figure.kickboxing",       [.K, .P])
+        ("special_teams", "Special Teams",   "figure.kickboxing",       [.K, .P, .LS, .H])
     ]
 
     /// Finds active mentorships on a roster: a Mentor/Team Leader veteran

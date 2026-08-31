@@ -261,7 +261,9 @@ enum TemplateAttributeSolver {
 
     /// The game's own attribute names for a position, in declaration order.
     /// These are exactly the keys the transform tool writes into `areaHints`
-    /// (verified against all 19 positions in `league_2026_publish.json`).
+    /// (verified against the 19 positions in `league_2026_publish.json`; the
+    /// snapper and holder post-date that file and have no hints in it, so the
+    /// solver falls back to its level-only path for them).
     static func skillKeys(for position: Position) -> [String] {
         switch position {
         case .QB:
@@ -282,6 +284,10 @@ enum TemplateAttributeSolver {
             return ["manCoverage", "zoneCoverage", "press", "ballSkills"]
         case .K, .P:
             return ["kickPower", "kickAccuracy"]
+        case .LS:
+            return ["snapVelocity", "snapAccuracy"]
+        case .H:
+            return ["handling", "placement"]
         }
     }
 
@@ -322,6 +328,10 @@ enum TemplateAttributeSolver {
             ))
         case .K, .P:
             return .kicking(KickingAttributes(kickPower: v[0], kickAccuracy: v[1]))
+        case .LS:
+            return .snapping(SnapAttributes(snapVelocity: v[0], snapAccuracy: v[1]))
+        case .H:
+            return .holding(HoldAttributes(handling: v[0], placement: v[1]))
         }
     }
 }

@@ -1187,6 +1187,16 @@ enum DraftEngine {
                 kickPower: scaleAttribute(k.kickPower, factor: factor),
                 kickAccuracy: scaleAttribute(k.kickAccuracy, factor: factor)
             ))
+        case .snapping(let s):
+            return .snapping(SnapAttributes(
+                snapVelocity: scaleAttribute(s.snapVelocity, factor: factor),
+                snapAccuracy: scaleAttribute(s.snapAccuracy, factor: factor)
+            ))
+        case .holding(let h):
+            return .holding(HoldAttributes(
+                handling: scaleAttribute(h.handling, factor: factor),
+                placement: scaleAttribute(h.placement, factor: factor)
+            ))
         }
     }
 

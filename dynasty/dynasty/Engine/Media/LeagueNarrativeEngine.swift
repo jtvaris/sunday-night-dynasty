@@ -747,7 +747,7 @@ enum LeagueNarrativeEngine {
                 + Double(line.tackles) / games / 5.5 * 1.25
         case .K:
             score = Double(line.fieldGoalsMade) / games / 2.2 * 2.0
-        case .LT, .LG, .C, .RG, .RT, .P:
+        case .LT, .LG, .C, .RG, .RT, .P, .LS, .H:
             return nil
         }
         return score.clampedNarrative(to: 0...5.25)
@@ -780,7 +780,7 @@ enum LeagueNarrativeEngine {
             production = "\(line.defInts) interceptions and \(line.passesDefended) passes defended"
         case .K:
             production = "\(line.fieldGoalsMade) field goals"
-        case .LT, .LG, .C, .RG, .RT, .P:
+        case .LT, .LG, .C, .RG, .RT, .P, .LS, .H:
             production = nil
         }
         guard let production else { return nil }

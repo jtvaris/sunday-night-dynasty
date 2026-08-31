@@ -467,6 +467,11 @@ struct LeagueHistoryView: View {
             parts = ["\(line.fieldGoalsMade)/\(line.fieldGoalsAttempted) FG"]
         case .P:
             parts = ["\(line.punts) punts", String(format: "%.1f avg", line.puntAverage)]
+        case .LS, .H:
+            // Nothing counts a snap's velocity or a hold's spot, so there is no
+            // season line to print — the same rule the offensive line follows,
+            // minus the snap count, which is not recorded for either job.
+            parts = []
         case nil:
             // Position unreadable (a raw value from a future build): fall back
             // to the sentence rather than guessing at categories.

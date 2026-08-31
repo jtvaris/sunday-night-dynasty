@@ -95,10 +95,16 @@ enum ScoutingEngine {
             handRange = 9.0...10.25
             armRange = 31.0...34.0
             wingspanRange = 75.0...81.0
-        case .K, .P:
+        case .K, .P, .H:
             handRange = 8.0...9.5
             armRange = 30.0...32.5
             wingspanRange = 70.0...76.0
+        case .LS:
+            // A snapper's hands are the tool — measured like a centre's, on a
+            // tight end's frame.
+            handRange = 9.25...10.5
+            armRange = 31.5...34.0
+            wingspanRange = 76.0...82.0
         }
 
         func roundToTwo(_ v: Double) -> Double {
@@ -429,6 +435,10 @@ enum ScoutingEngine {
                     "PRS": gradeWithNoise(a.press), "BSK": gradeWithNoise(a.ballSkills)]
         case .kicking(let a):
             return ["PWR": gradeWithNoise(a.kickPower), "ACC": gradeWithNoise(a.kickAccuracy)]
+        case .snapping(let a):
+            return ["VEL": gradeWithNoise(a.snapVelocity), "SNP": gradeWithNoise(a.snapAccuracy)]
+        case .holding(let a):
+            return ["HND": gradeWithNoise(a.handling), "PLC": gradeWithNoise(a.placement)]
         }
     }
 
@@ -625,6 +635,12 @@ enum ScoutingEngine {
         case .kicking(let k):
             if k.kickPower >= threshold { pool.append("Strong leg, can hit from 55+") }
             if k.kickAccuracy >= threshold { pool.append("Accurate and consistent") }
+        case .snapping(let s):
+            if s.snapVelocity >= threshold { pool.append("Fires the ball back, under 0.7 seconds") }
+            if s.snapAccuracy >= threshold { pool.append("Puts every snap on the hands") }
+        case .holding(let h):
+            if h.handling >= threshold { pool.append("Fields a wild snap without breaking rhythm") }
+            if h.placement >= threshold { pool.append("Ball down clean, laces out, every time") }
         }
 
         if pool.isEmpty {
@@ -688,6 +704,12 @@ enum ScoutingEngine {
         case .kicking(let k):
             if k.kickPower <= threshold { pool.append("Limited range") }
             if k.kickAccuracy <= threshold { pool.append("Inconsistent accuracy") }
+        case .snapping(let s):
+            if s.snapVelocity <= threshold { pool.append("Snap gets there slowly") }
+            if s.snapAccuracy <= threshold { pool.append("Sprays the ball off the hold") }
+        case .holding(let h):
+            if h.handling <= threshold { pool.append("Bobbles anything off-target") }
+            if h.placement <= threshold { pool.append("Spot and tilt are inconsistent") }
         }
 
         if pool.isEmpty {
@@ -1019,7 +1041,7 @@ enum ScoutingEngine {
             case .MLB, .OLB:                   return 11.0  // Tackling/blitzing fairly observable
             case .DE, .DT:                     return 9.0   // Pass rush moves very visible
             case .LT, .LG, .C, .RG, .RT:      return 8.0   // Technique most measurable in 1-on-1
-            case .K, .P:                       return 6.0   // Accuracy directly measurable
+            case .K, .P, .LS, .H:              return 6.0   // Accuracy directly measurable
             }
         }()
 
@@ -1056,8 +1078,8 @@ enum ScoutingEngine {
             return .bigman
         case .RB, .FB, .TE, .OLB, .MLB:
             return .balanced
-        case .K, .P:
-            return .balanced  // Won't be reached (K/P excluded above)
+        case .K, .P, .LS, .H:
+            return .balanced  // Won't be reached (specialists excluded above)
         }
     }
 
@@ -1229,7 +1251,7 @@ enum ScoutingEngine {
                     broad: drill(122, 5, lowerIsBetter: false, bounds: broadBounds),
                     cone: drill(7.00, 0.15, lowerIsBetter: true, bounds: coneBounds),
                     shuttle: drill(4.25, 0.10, lowerIsBetter: true, bounds: shuttleBounds))
-            case .K, .P:
+            case .K, .P, .H:
                 return PositionDrills(
                     forty: timed(4.95, 0.15, 4.60, 5.40),
                     bench: drill(15, 4, lowerIsBetter: false, bounds: benchBounds),
@@ -1237,6 +1259,16 @@ enum ScoutingEngine {
                     broad: drill(105, 7, lowerIsBetter: false, bounds: broadBounds),
                     cone: drill(7.40, 0.25, lowerIsBetter: true, bounds: coneBounds),
                     shuttle: drill(4.55, 0.18, lowerIsBetter: true, bounds: shuttleBounds))
+            case .LS:
+                // A snapper tests between the tight end and the interior line —
+                // heavier and stronger than the kicking room, slower than a TE.
+                return PositionDrills(
+                    forty: timed(4.90, 0.12, 4.65, 5.25),
+                    bench: drill(22, 4, lowerIsBetter: false, bounds: benchBounds),
+                    vertical: drill(29, 3, lowerIsBetter: false, bounds: vertBounds),
+                    broad: drill(108, 6, lowerIsBetter: false, bounds: broadBounds),
+                    cone: drill(7.35, 0.20, lowerIsBetter: true, bounds: coneBounds),
+                    shuttle: drill(4.50, 0.15, lowerIsBetter: true, bounds: shuttleBounds))
             }
         }
     }
@@ -2941,6 +2973,11 @@ enum ScoutingEngine {
         case .P:
             let avgYards = 38.0 + Double(overall) / 10.0
             return String(format: "%.1f avg punt yards in %d games", avgYards, gamesPlayed)
+        case .LS, .H:
+            // Neither job has a college box score. The count of appearances is
+            // the only figure here that is actually derived from anything, so
+            // it is the only one printed.
+            return "Handled the operation in all \(gamesPlayed) games"
         }
     }
 
@@ -4070,6 +4107,12 @@ enum ScoutingEngine {
         case .K, .P:
             positives = ["Consistent ball flight", "Good leg under pressure"]
             negatives = ["Inconsistent operation time", "Leg speed average"]
+        case .LS:
+            positives = ["Snap on the hands every rep", "Gets the ball back fast", "Gets downfield after the snap"]
+            negatives = ["Snap sails when he hurries", "Slow to release and cover"]
+        case .H:
+            positives = ["Clean catch, clean spot", "Laces out under a rush", "Recovers a bad snap"]
+            negatives = ["Bobbles anything off-target", "Tilt is inconsistent"]
         }
 
         // Bias the impressions toward the prospect's true ability so high-overall prospects
@@ -5234,7 +5277,7 @@ struct CombineAthleticismWeights {
             return DrillWeights(forty: 30, bench: 5, vertical: 15, broad: 15, threeCone: 20, shuttle: 15)
         case .SS:
             return DrillWeights(forty: 25, bench: 10, vertical: 15, broad: 15, threeCone: 20, shuttle: 15)
-        case .K, .P:
+        case .K, .P, .LS, .H:
             // A specialist's drills are noise against his job, which is why the
             // combine table keeps him out of the DNP list too. Flat rather than
             // absent, so a K who did test still ranks against the other

@@ -17,7 +17,7 @@ private struct EvalPositionGroup: Identifiable {
         EvalPositionGroup(id: "DL",  label: "DL",  positions: [.DE, .DT]),
         EvalPositionGroup(id: "LB",  label: "LB",  positions: [.OLB, .MLB]),
         EvalPositionGroup(id: "DB",  label: "DB",  positions: [.CB, .FS, .SS]),
-        EvalPositionGroup(id: "ST",  label: "ST",  positions: [.K, .P]),
+        EvalPositionGroup(id: "ST",  label: "ST",  positions: [.K, .P, .LS, .H]),
     ]
 }
 
@@ -2639,7 +2639,7 @@ struct RosterEvaluationView: View {
             .DE, .DT, .DT, .DE,
             .OLB, .MLB, .MLB, .OLB,
             .CB, .CB, .FS, .SS,
-            .K, .P
+            .K, .P, .LS, .H
         ]
         var result: [Player] = []
         var used = Set<UUID>()

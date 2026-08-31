@@ -219,6 +219,14 @@ enum TrainingPlanEngine {
             guard let value = trained(k.kickAccuracy, delta: delta, ceiling: ceiling, cap: cap) else { return }
             k.kickAccuracy = value
             player.positionAttributes = .kicking(k)
+        case .snapping(var s):
+            guard let value = trained(s.snapAccuracy, delta: delta, ceiling: ceiling, cap: cap) else { return }
+            s.snapAccuracy = value
+            player.positionAttributes = .snapping(s)
+        case .holding(var h):
+            guard let value = trained(h.placement, delta: delta, ceiling: ceiling, cap: cap) else { return }
+            h.placement = value
+            player.positionAttributes = .holding(h)
         }
     }
 

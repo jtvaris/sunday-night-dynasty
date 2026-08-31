@@ -96,6 +96,8 @@ func dcSkillValues(_ pa: PositionAttributes) -> [Int] {
     case .linebacker(let a):     return [a.tackling, a.zoneCoverage, a.manCoverage, a.blitzing]
     case .defensiveBack(let a):  return [a.manCoverage, a.zoneCoverage, a.press, a.ballSkills]
     case .kicking(let a):        return [a.kickPower, a.kickAccuracy]
+    case .snapping(let a):       return [a.snapVelocity, a.snapAccuracy]
+    case .holding(let a):        return [a.handling, a.placement]
     }
 }
 

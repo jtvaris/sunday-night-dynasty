@@ -2989,7 +2989,7 @@ private enum CutPositionGroup: String, CaseIterable, Identifiable {
         case .dline:     return position == .DE || position == .DT
         case .lb:        return position == .OLB || position == .MLB
         case .db:        return [.CB, .FS, .SS].contains(position)
-        case .st:        return position == .K || position == .P
+        case .st:        return position.side == .specialTeams
         }
     }
 }

@@ -935,8 +935,12 @@ final class FaceLibrary {
             return [("heavy", 0.04), ("athletic", 0.66), ("lean", 0.30)]
         case .WR, .CB:
             return [("heavy", 0.01), ("athletic", 0.39), ("lean", 0.60)]
-        case .K, .P:
+        case .K, .P, .H:
             return [("heavy", 0.08), ("athletic", 0.42), ("lean", 0.50)]
+        case .LS:
+            // Built like the tight end / centre he is, not like the kicker he
+            // stands next to.
+            return [("heavy", 0.30), ("athletic", 0.62), ("lean", 0.08)]
         }
     }
 

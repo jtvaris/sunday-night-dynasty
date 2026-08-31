@@ -173,6 +173,13 @@ enum CareerStatColumns {
                 CareerStatColumn("PUNT", width: 44) { "\($0.line.punts)" },
                 CareerStatColumn("AVG", width: 42) { String(format: "%.1f", $0.line.puntAverage) },
             ]
+        case .LS, .H:
+            // No engine counts a snap or a hold, so appearances are the only
+            // honest production column — the same rule the line follows, minus
+            // the snap count, which `SeasonStatLine` does not record for either.
+            return [
+                CareerStatColumn("GS", width: 32) { "\($0.gamesStarted)" },
+            ]
         }
     }
 }
@@ -760,6 +767,15 @@ struct PlayerStatsView: View {
                 statRow("Punt Average", value: String(format: "%.1f", line.puntAverage))
             }
             .listRowBackground(Color.backgroundSecondary)
+
+        case .LS, .H:
+            // Appearances only. Nothing in the engine counts a snap's velocity
+            // or a hold's spot yet, and an invented column would be worse than
+            // a short section.
+            Section(title) {
+                statRow("Games Played / Started", value: "\(gamesPlayed) / \(gamesStarted)")
+            }
+            .listRowBackground(Color.backgroundSecondary)
         }
     }
 
@@ -797,6 +813,11 @@ struct PlayerStatsView: View {
 
             case .P:
                 statRow("Punts/G", value: String(format: "%.1f", Double(line.punts) / gp))
+
+            case .LS, .H:
+                // Nothing per-game is counted for either job, so this section
+                // stays empty rather than dividing a zero by games played.
+                EmptyView()
             }
         }
         .listRowBackground(Color.backgroundSecondary)

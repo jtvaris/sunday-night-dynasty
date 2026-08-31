@@ -89,7 +89,7 @@ nonisolated struct PlayerGameStats: Codable, Identifiable {
     /// move to the `true` side as they are covered.
     static func measures(_ position: Position) -> Bool {
         switch position {
-        case .LT, .LG, .C, .RG, .RT, .P:
+        case .LT, .LG, .C, .RG, .RT, .P, .LS, .H:
             return false
         case .QB, .RB, .FB, .WR, .TE, .DE, .DT, .OLB, .MLB, .CB, .FS, .SS, .K:
             return true

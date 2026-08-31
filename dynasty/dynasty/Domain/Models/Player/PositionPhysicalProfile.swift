@@ -116,9 +116,18 @@ enum PositionPhysicalProfile {
             return Profile(speed: Prior(82, 5), acceleration: Prior(83, 5),
                            strength: Prior(58, 7), agility: Prior(80, 5),
                            stamina: staminaPrior, durability: durabilityPrior)
-        case .K, .P:
+        // The holder is a kicking-room body — in the real game he is usually the
+        // punter — so he shares the specialists' shape rather than getting an
+        // invented one.
+        case .K, .P, .H:
             return Profile(speed: Prior(50, 8), acceleration: Prior(52, 8),
                            strength: Prior(45, 8), agility: Prior(55, 8),
+                           stamina: staminaPrior, durability: durabilityPrior)
+        // The snapper is not: he is a tight end / centre body who has to fire
+        // the ball back and then get downfield, so he sits between the two.
+        case .LS:
+            return Profile(speed: Prior(60, 7), acceleration: Prior(64, 6),
+                           strength: Prior(74, 6), agility: Prior(62, 6),
                            stamina: staminaPrior, durability: durabilityPrior)
         }
     }
@@ -275,6 +284,8 @@ enum PositionPhysicalProfile {
         case .SS:  return (71...75, 200...225)
         case .K:   return (71...75, 185...215)
         case .P:   return (72...76, 200...225)
+        case .LS:  return (73...77, 235...260)
+        case .H:   return (72...76, 195...220)
         }
     }
 

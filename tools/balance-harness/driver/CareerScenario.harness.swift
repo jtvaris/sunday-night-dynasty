@@ -289,7 +289,7 @@ func crPayGroup(_ pos: Position) -> String {
     case .DE, .DT:                  return "DL"
     case .OLB, .MLB:                return "LB"
     case .CB, .FS, .SS:             return "DB"
-    case .K, .P:                    return "ST"
+    case .K, .P, .LS, .H:           return "ST"
     }
 }
 
