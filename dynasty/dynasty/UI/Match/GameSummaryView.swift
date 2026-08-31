@@ -746,7 +746,19 @@ private struct PlayerStatRow: View {
         case .K:
             return "\(stat.fieldGoalsMade)/\(stat.fieldGoalsAttempted) FG"
         default:
-            return "\(stat.rushingYards + stat.receivingYards) yds"
+            // What is left here is the five linemen, the punter, the long
+            // snapper and the holder — none of whom has a rushing or receiving
+            // line. Summing two fields a snapper never fills captions him
+            // "0 yds", a carry-and-catch figure for a man who has neither, so
+            // print only what he actually did and stay silent when he did
+            // nothing. `topPerformers` reaches this branch on the coverage
+            // tackle or the tackle-eligible catch that put him in the card.
+            var parts: [String] = []
+            if stat.carries > 0    { parts.append("\(stat.carries) car, \(stat.rushingYards) yds") }
+            if stat.receptions > 0 { parts.append("\(stat.receptions) rec, \(stat.receivingYards) yds") }
+            if stat.tackles > 0    { parts.append("\(stat.tackles) tkl") }
+            if stat.sacks > 0      { parts.append(String(format: "%.1f sck", stat.sacks)) }
+            return parts.joined(separator: ", ")
         }
     }
 

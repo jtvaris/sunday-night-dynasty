@@ -5229,8 +5229,11 @@ struct CombineBenchmarks {
 /// relative pools the screens build rather than anything the engine holds.
 ///
 /// Positions are grouped where the football answer is genuinely identical (the
-/// two tackles, the three interior linemen, the two specialists), exactly as
-/// `CombineDrillTable` groups them; all 19 are covered.
+/// two tackles, the three interior linemen, and all four specialists together);
+/// all 21 are covered. The specialist grouping is deliberately COARSER than
+/// `CombineDrillTable`'s, which gives the long snapper his own drill row and
+/// leaves K/P/H sharing one: a snapper's measurables differ from a kicker's, but
+/// what those measurables are worth against his job is the same flat nothing.
 struct CombineAthleticismWeights {
     /// Percentage points out of 100, one per drill.
     struct DrillWeights {
