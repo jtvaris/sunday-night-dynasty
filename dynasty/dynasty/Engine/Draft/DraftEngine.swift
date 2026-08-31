@@ -269,10 +269,12 @@ enum DraftEngine {
         // outside it would not come across and the `perception` scenario — the
         // instrument that measured every number below — would not compile.
         //
-        //   deficitPoints        a genuine hole is worth up to ~+3.8 (a club with
-        //                        nobody at the position at all), a one-body
-        //                        shortfall +0.75 ≈ eight slots of board. Clubs
-        //                        reach for needs; they do not reach a round.
+        //   deficitPoints        a genuine hole is worth up to +3.68 (an EMPTY
+        //                        room at `.WR`/`.CB`, where `idealCounts` is 5:
+        //                        `3.5 × (1 + 5×0.15 + 0.3 − 1)`), a one-body
+        //                        shortfall +0.53. Round 1 doubles both
+        //                        (`roundScale`). Clubs reach for needs; they do
+        //                        not reach a round.
         //   positionalValue*     the league premium, centred on the modal 0.8
         //                        weight: +1.6 for QB/DE/CB/WR/LT, 0 for the
         //                        second tier, -1.6 for backs and interior line.
@@ -398,10 +400,16 @@ enum DraftEngine {
         // weighting across seven rounds is the one thing no real war room does.
         //
         // Trades the realism of a needs-driven first round against reaching: at
-        // 2.0 a genuine hole is worth up to ~+7.5 board points in round 1, which
-        // is a real reach and is meant to be, and 0.6 on day three lets the best
-        // player left win almost every argument. `pickNumber == 0` — a caller
-        // with no slot context — takes the neutral 1.0 rung.
+        // 2.0 a genuine hole is worth up to **+9.10** board points in round 1,
+        // which is a real reach and is meant to be, and 0.6 on day three lets
+        // the best player left win almost every argument. `pickNumber == 0` — a
+        // caller with no slot context — takes the neutral 1.0 rung.
+        //
+        // That ceiling is `3.5 × 2.0 × (0.60 + 0.45 + 0.25)`: one sub-60 man,
+        // lost in the install, in a room `idealCounts` wants five of (`.WR` /
+        // `.CB`). It read ~7.5 before `schemeMismatchBump` joined the ladder —
+        // see that constant for the walk from 7.35 to 9.10 and for why an EMPTY
+        // room cannot reach it.
         let roundScale: Double
         switch pickNumber {
         case 1...32:  roundScale = 2.0
@@ -1076,6 +1084,31 @@ enum DraftEngine {
 
     /// Convenience overload for callers that hold the drafting team's staff rather
     /// than the resolved coordinator schemes.
+    ///
+    /// ## One answer to "what does this club run"
+    ///
+    /// This used to resolve the OC chair and the DC chair and stop there, which
+    /// made it the SECOND answer to that question inside this file. The first is
+    /// the live install `aiMakePick` / `teamNeedComponents` are handed, resolved
+    /// by `WeekAdvancer.installedOffensiveScheme(staff:)`, which falls
+    /// OC → head coach → assistant head coach. The two disagreed for exactly the
+    /// club with a vacant coordinator chair, and `CoachingEngine
+    /// .activeSchemeFamiliarity` shows that is a modelled state and not a
+    /// theoretical one.
+    ///
+    /// The consequence was the fam-0 bug this function exists to fix, coming
+    /// back on a narrower population. A club with no OC but a head coach who
+    /// carries an offensive system installs that system: the draft board scores
+    /// its offensive rooms against it, `WeekAdvancer.offseasonSchemeFit` grades
+    /// its players on it, and `learnScheme` teaches it. The rookie seeded here
+    /// got NO `schemeFamiliarity` key for it — he entered at 0 in the only
+    /// playbook he would ever be handed, which is a heavier penalty than the
+    /// rawest prospect in the class takes (`rookieFamiliarityFloor` is 20).
+    ///
+    /// So it delegates. There is no second copy of the OC → HC → AHC chain here
+    /// and there must not be one: `installedOffensiveScheme` is the one
+    /// resolver, and the camp writer, the draft room and the free-agent market
+    /// already read it.
     static func initializeRookieFamiliarity(
         player: Player,
         prospect: CollegeProspect,
@@ -1085,8 +1118,8 @@ enum DraftEngine {
         initializeRookieFamiliarity(
             player: player,
             prospect: prospect,
-            offensiveScheme: coaches.first { $0.role == .offensiveCoordinator }?.offensiveScheme,
-            defensiveScheme: coaches.first { $0.role == .defensiveCoordinator }?.defensiveScheme,
+            offensiveScheme: WeekAdvancer.installedOffensiveScheme(staff: coaches),
+            defensiveScheme: WeekAdvancer.installedDefensiveScheme(staff: coaches),
             isUndrafted: isUndrafted
         )
     }
@@ -1536,17 +1569,24 @@ enum DraftEngine {
     ///
     /// ## The quality half used to be inverted in magnitude (F-28)
     ///
-    /// A position group averaging under 60 OVR was worth `+0.2` of multiplier,
-    /// i.e. **+1.0 board point** through `aiMakePick`'s `deficitPoints`. Being
-    /// two bodies short at any position was worth `2 × 0.15 = +0.3`, i.e.
-    /// **+1.5**. So a club whose entire cornerback room graded 55 valued that
-    /// hole *less* than a club two bodies short at fullback. The audit's verdict
-    /// was that this is a bug and not a taste, and it is: a replacement-level
-    /// starting group is the loudest need a real front office has.
+    /// A position group averaging under 60 OVR was worth `+0.2` of multiplier
+    /// against `2 × 0.15 = +0.3` for being two bodies short at any position. So
+    /// a club whose entire cornerback room graded 55 valued that hole *less*
+    /// than a club two bodies short at fullback. The audit's verdict was that
+    /// this is a bug and not a taste, and it is: a replacement-level starting
+    /// group is the loudest need a real front office has.
     ///
-    /// The bumps below price a sub-60 room at **+2.25 board points** and a
-    /// sub-70 room at **+1.25**, against +0.75 for each missing body. The
-    /// ordering is now the right way round and the count half still speaks.
+    /// The bumps below price a sub-60 room at `+0.45` and a sub-70 room at
+    /// `+0.25`, against `+0.15` for each missing body. The ordering is now the
+    /// right way round and the count half still speaks.
+    ///
+    /// In board points, through `aiMakePick`'s `deficitPoints` of **3.5** at
+    /// `roundScale` 1.0 (rounds 2-3; round 1 doubles, day three is ×0.6): the
+    /// sub-60 room is **+1.58**, the sub-70 room **+0.88**, a missing body
+    /// **+0.53**. These figures were written when `deficitPoints` was 5.0 and
+    /// read +2.25 / +1.25 / +0.75; F-29's round scaling paid for the move to
+    /// 3.5 in the same pass and the translation was never re-run. The RATIOS,
+    /// which are what the ordering argument above rests on, are unchanged.
     ///
     /// **What was NOT changed, and why.** The audit also asks for the 48-vs-46
     /// ideal-count reconciliation (the counts sum to 48 against rosters that
@@ -1696,16 +1736,45 @@ enum DraftEngine {
                 // halves of the multiplier are talking about the same room —
                 // and only on the side of the ball the scheme belongs to. A
                 // kicker belongs to neither install and is never scored here.
-                // The SIDE-OF-BALL split is the one `RosterView`'s FIT slot
-                // uses (`RosterView.installedScheme(for:)`): a man is measured
+                // The SIDE-OF-BALL SPLIT is shared with `RosterView`'s FIT slot
+                // (`RosterView.installedScheme(for:)`): a man is measured
                 // against his own unit's install and never borrows the other
-                // side's. The SCHEME VALUE now agrees with it wherever the
-                // caller supplies the live install — RosterView reads the
-                // current coordinator off the `Coach` query and so does
-                // `WeekAdvancer.installedOffensiveScheme(staff:)`. A caller
-                // that supplies neither install still reads the snapshot and
-                // will disagree with the screen from `.coachingChanges` to the
-                // following camp.
+                // side's, and a specialist is scored by neither.
+                //
+                // The SPLIT is all that is shared. The two do NOT resolve the
+                // same install, and a comment here once claimed they did:
+                //
+                // - OFFENSE. This side reads `WeekAdvancer
+                //   .installedOffensiveScheme(staff:)` when the caller supplies
+                //   it, which falls OC → head coach → assistant head coach.
+                //   `RosterView` reads its `offensiveScheme` property, which
+                //   `RosterViewWrapper` fills from the OC chair ALONE. Empty OC
+                //   chair, or an OC hired off the defensive side with no
+                //   `offensiveScheme`: the board scores this room against the
+                //   head coach's system and the screen prints nothing.
+                // - DEFENSE. Worse, because it is not a silence. `RosterView
+                //   .defensiveScheme` is NON-optional and defaults to
+                //   `.base43`, and the wrapper leaves it there when the DC
+                //   chair is empty or the DC carries no scheme. So the screen
+                //   measures every defender against a 4-3 the club may not run
+                //   while this rung measures them against the head coach's
+                //   defense — or, with no defensive-scheme coach anywhere,
+                //   stays silent while the screen still prints a 4-3 number.
+                //
+                // They therefore agree only for a club whose OC and DC chairs
+                // are both filled by a coach carrying a scheme — the common
+                // case, and not the case this rung exists for. Closing it is a
+                // change to `RosterViewWrapper` (resolve through the same two
+                // `WeekAdvancer` functions) plus a SEPARATE optional install
+                // property on `RosterView`: `defensiveScheme` cannot simply
+                // become optional, because `schemeStarterCount(for:)` and
+                // `PositionGradeCalculator` also read it and need a real
+                // scheme. Both files are outside this one; not done here.
+                //
+                // And a caller that supplies neither install reads
+                // `Team.lastOffensiveSchemeRaw`, which the camp writes, so it
+                // disagrees with BOTH from `.coachingChanges` to the following
+                // camp.
                 let installedScheme: String?
                 switch position.side {
                 case .offense:      installedScheme = offensiveInstall
@@ -1738,11 +1807,17 @@ enum DraftEngine {
     /// — a replacement-level room.
     ///
     /// Trades need against best-available. Through `aiMakePick`'s
-    /// `deficitPoints` of 5.0 this is worth **+2.25 board points**, i.e. most of
-    /// one letter grade: enough that a club with a genuinely broken position
-    /// group reaches for it, not enough to take a bad player over a good one.
-    /// At the old 0.2 it was worth +1.0 and lost to a two-body shortfall
-    /// anywhere on the roster, which is the inversion F-28 names.
+    /// `deficitPoints` of 3.5 this is worth **+1.58 board points** at
+    /// `roundScale` 1.0 and **+3.15 in round 1** — most of one letter grade in
+    /// the round where it matters: enough that a club with a genuinely broken
+    /// position group reaches for it, not enough to take a bad player over a
+    /// good one. At the old 0.2 it was worth +0.70 and lost to a two-body
+    /// shortfall anywhere on the roster (+1.05), which is the inversion F-28
+    /// names.
+    ///
+    /// (The "+2.25" this note used to quote was the same 0.45 read against a
+    /// `deficitPoints` of 5.0, which F-29 retired in the same pass that raised
+    /// this bump. The constant did not move; the currency did.)
     private static let replacementLevelBump = 0.45
 
     /// Multiplier bump for a group averaging 60-70 OVR — startable, not good.
@@ -1787,9 +1862,13 @@ enum DraftEngine {
     ///   7.35 → `3.5 × 2.0 × (0.60 + 0.45 + 0.25)` = **+9.10**, at `.WR` /
     ///   `.CB` and nowhere else.
     /// - **It does not, on its own, trip `quarterbackNeedBar` (1.3).** Two
-    ///   startable quarterbacks who do not know the system score `1.25` and get
-    ///   the ordinary need bump without the QB panic premium. Thin AND lost
-    ///   (`1.15 + 0.25 = 1.40`) does trip it, which reads correctly.
+    ///   quarterbacks grading 70+ who do not know the system score `1.25` and
+    ///   get the ordinary need bump without the QB panic premium. Thin AND lost
+    ///   (`1.15 + 0.25 = 1.40`) does trip it, which reads correctly — and so
+    ///   does a 60-70 room that is also lost (`1 + 0.25 + 0.25 = 1.50`), which
+    ///   is why the claim is "on its own" and not "never". `belowAverageBump`
+    ///   calls a 60-70 room "startable"; that word is doing different work
+    ///   there, so this rung's examples say the number instead.
     /// - **It moves kickers and punters DOWN the board, relatively.** The need
     ///   term in `aiMakePick` is additive and priced apart from positional
     ///   weight, so wherever this rung fires across a club's offensive and
