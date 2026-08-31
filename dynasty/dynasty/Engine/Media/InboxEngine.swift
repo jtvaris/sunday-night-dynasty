@@ -1937,9 +1937,10 @@ enum InboxEngine {
 // tray, so a sender gets a reply control only where a system already exists to
 // take the movement:
 //
-//   * `.owner`      -> `Owner.satisfaction` (owner trust), the field
-//                      `OwnerPersonaEngine` reads for job security, the season
-//                      verdict and the firing threshold.
+//   * `.owner`      -> `Owner.satisfaction`, the field `OwnerPersonaEngine`
+//                      reads for job security, the season verdict and the
+//                      firing threshold. It is NOT `DraftReputation.ownerTrust`
+//                      — see the note on `ReplyChannel.ownerTrust` below.
 //   * `.media`      -> `LegacyTracker.mediaReputation`, the field the press
 //                      conference already writes.
 //   * coordinators  -> `Player.morale` across that coordinator's unit, the
@@ -1955,7 +1956,7 @@ enum InboxEngine {
 // Every reply books exactly ±1 on exactly one system. Each number is set below
 // a movement that same system already makes for a real event:
 //
-//   * **Owner trust ±1.** The smallest non-zero `ownerSatisfaction` cell in
+//   * **Owner satisfaction ±1.** The smallest non-zero `ownerSatisfaction` cell in
 //     `PressEngine.situationAdjustment` is ±2, and
 //     `OwnerPersonaEngine.respond(to:comply:owner:)` books +3 for complying
 //     with a whim, −4/−5 for defying one. A private email is a smaller thing
@@ -1973,10 +1974,26 @@ enum InboxEngine {
 //
 // ## Rule 3 — the season budget
 //
-// Without a ceiling the eight owner letters a season would be worth +8 for
-// agreeing with all of them, which is the whole bonus
-// `OwnerPersonaEngine.evaluateSeason` pays for an outstanding year. So each
-// channel books only its first few replies of the season:
+// A reply is only offered on a `.owner` letter filed under `.ownerDirective`
+// (`replyOptions`), and twelve call sites in shipping code build one:
+//
+//   * eight in this file — `coachingChangesMessages`, `combineMessages`,
+//     `freeAgencyMessages`, `reviewRosterMessages`, `trainingCampMessages`,
+//     `rosterCutsMessages`, `superBowlMessages`, `tradeDeadlineMessages`;
+//   * `OwnerPersonaEngine.seasonKickoffMessage` and `.reviewInboxMessage`;
+//   * `OwnerSatisfactionEngine.satisfactionMessage`, which `WeekAdvancer`
+//     offers EVERY week the owner's rating moves a band or swings hard, so it
+//     alone is not bounded by one letter a season;
+//   * `WeekAdvancer`'s unaddressed-roster-demands letter.
+//
+// (A thirteenth, `OwnerPersonaEngine.whimInboxMessage`, sets
+// `decisionHandledElsewhere` and carries no reply at all.)
+//
+// So the uncapped count is at least twelve and has no fixed ceiling. Agreeing
+// with all of them at +1 each would clear +8 — the whole bonus
+// `OwnerPersonaEngine.evaluateSeason` pays for an outstanding year — with room
+// to spare. Hence a ceiling: each channel books only its first few replies of
+// the season:
 //
 //   * owner 3            -> a season of email diplomacy is worth at most ±3,
 //                           i.e. one whim compliance (`respond`, +3).
@@ -1993,15 +2010,31 @@ extension InboxEngine {
     /// The one system a reply feeds. One channel per reply — a reply never
     /// books two movements.
     enum ReplyChannel: String, CaseIterable {
+        /// Writes `Owner.satisfaction`, and is named **Owner satisfaction** on
+        /// screen — the name `OwnerBriefing`'s card, its accessibility label and
+        /// the dashboard tile already give that field.
+        ///
+        /// The case identifier reads `ownerTrust` for one bad reason: it was
+        /// named that before this channel had a screen name, and
+        /// `DraftReputation.ownerTrust` is a DIFFERENT persisted number (0…100,
+        /// neutral 70, an input to `GMStanding` and contract demands) that this
+        /// channel never touches. Nothing player-facing says "Owner trust" any
+        /// more; the identifier is the last of it, and renaming it means
+        /// editing the switch in `InboxView.availableReplyOptions`, which is
+        /// not this change's to touch. The raw value is not persisted — replies
+        /// store `ReplyOption.id`, not a channel — so the rename is free when
+        /// that file is next open.
         case ownerTrust
         case mediaReputation
         case offenseMorale
         case defenseMorale
 
-        /// How this channel reads on screen.
+        /// How this channel reads on screen. Each string is the name the rest of
+        /// the app already prints for that same field, so a reply cannot claim
+        /// to have moved something the player knows by another name.
         var systemName: String {
             switch self {
-            case .ownerTrust:       return "Owner trust"
+            case .ownerTrust:       return "Owner satisfaction"
             case .mediaReputation:  return "Media reputation"
             case .offenseMorale:    return "Offense morale"
             case .defenseMorale:    return "Defense morale"
@@ -2144,11 +2177,29 @@ extension InboxEngine {
     /// A letter the coach never answered counts as nothing here, and as nothing
     /// anywhere else — see the note on `InboxMessage.sentReplyID`.
     ///
-    /// Counting off the tray means a letter leaving the tray would hand its
-    /// reply back, so the two ways out are both closed for the season that is
-    /// being counted: `InboxView.isReplyLocked` refuses to delete a letter
-    /// answered this season (archiving it is still fine), and `Career.inbox`
-    /// keeps the newest 200, which one season's mail does not reach.
+    /// Counting off the tray means a letter leaving the tray hands its reply
+    /// back. There are exactly two ways out, and only one of them is closed:
+    ///
+    ///   * Deletion is closed. `InboxView.isReplyLocked` refuses to delete a
+    ///     letter answered this season; archiving it is still fine, because an
+    ///     archived letter is still in `messages`.
+    ///   * Eviction is NOT closed. `Career.inbox`'s setter keeps
+    ///     `newValue.suffix(200)`, so the 201st letter of a season drops the
+    ///     oldest — and if that one carried a reply booked this season, the
+    ///     budget quietly refunds it.
+    ///
+    /// Whether a season ever produces 200 letters is **not measured here**. It
+    /// was previously asserted ("one season's mail does not reach 200") with
+    /// nothing behind it, and it cannot be settled by reading: `WeekAdvancer`
+    /// alone has 56 conditional `lastInboxMessages.append` sites whose volume
+    /// depends on a played season. So the claim is withdrawn rather than
+    /// repeated.
+    ///
+    /// It is left unfixed on purpose, not overlooked. The whole exposure is a
+    /// handful of extra ±1 replies in a season busy enough to overflow the
+    /// tray, which is smaller than the second ledger it would take to close —
+    /// and that ledger would live on `Career`, not here. Measure the per-season
+    /// letter count before spending anything on it.
     static func repliesBooked(
         in messages: [InboxMessage],
         channel: ReplyChannel,
@@ -2220,17 +2271,17 @@ extension InboxEngine {
             owner.satisfaction = max(0, min(100, before + option.delta))
             let landed = owner.satisfaction - before
             guard landed != 0 else {
-                return "Owner trust unchanged \u{2014} \(owner.name) is already at \(before) of 100."
+                return "\(option.channel.systemName) unchanged \u{2014} \(owner.name) is already at \(before) of 100."
             }
-            return "Owner trust \(signed(landed)) \u{2014} \(owner.name) \(before) \u{2192} \(owner.satisfaction)."
+            return "\(option.channel.systemName) \(signed(landed)) \u{2014} \(owner.name) \(before) \u{2192} \(owner.satisfaction)."
 
         case .mediaReputation:
             let before = career.legacy.mediaReputation
             let landed = career.legacy.adjustMediaReputation(by: option.delta)
             guard landed != 0 else {
-                return "Media reputation unchanged \u{2014} already at \(before), the end of the scale."
+                return "\(option.channel.systemName) unchanged \u{2014} already at \(before), the end of the scale."
             }
-            return "Media reputation \(signed(landed)) \u{2014} \(before) \u{2192} \(career.legacy.mediaReputation) (\(career.legacy.reputationLabel))."
+            return "\(option.channel.systemName) \(signed(landed)) \u{2014} \(before) \u{2192} \(career.legacy.mediaReputation) (\(career.legacy.reputationLabel))."
 
         case .offenseMorale, .defenseMorale:
             guard let side = option.channel.unitSide else { return nil }

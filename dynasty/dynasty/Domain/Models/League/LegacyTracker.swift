@@ -69,9 +69,14 @@ nonisolated struct LegacyTracker: Codable, Equatable {
     // MARK: - Mutating Helpers
 
     /// Apply the total effects from a press conference result.
+    ///
+    /// The reputation move goes through `adjustMediaReputation(by:)` rather than
+    /// repeating the rails inline. This method used to carry its own copy of the
+    /// −100…100 clamp, which meant two clamps on one field and two places to get
+    /// the range wrong.
     mutating func applyPressConferenceResult(_ result: PressConferenceResult, season: Int) {
         totalPoints += result.totalEffects.legacyPoints
-        mediaReputation = max(-100, min(100, mediaReputation + result.totalEffects.mediaPerception))
+        adjustMediaReputation(by: result.totalEffects.mediaPerception)
 
         // Record promises with the correct season. #161: the authoritative
         // ledger (with kind, threshold and settlement) is
@@ -85,14 +90,18 @@ nonisolated struct LegacyTracker: Codable, Equatable {
         }
     }
 
-    /// Move media reputation by `delta`, held to the same -100…100 range
-    /// `applyPressConferenceResult` clamps to.
+    /// Move media reputation by `delta`, held to −100…100.
     ///
-    /// The clamp lived only inside that one method, so the second writer to
-    /// this field — `InboxEngine.applyReply`, which books a media reply — would
-    /// have had to repeat it. Returns the movement that actually landed, which
-    /// is 0 at either rail; a caller that reports a number to the user must
-    /// report this one and not what it asked for.
+    /// **The only clamp on this field inside this type.** Both writers here go
+    /// through it — `applyPressConferenceResult` and, from outside,
+    /// `InboxEngine.applyReply` booking a media reply. Returns the movement that
+    /// actually landed, which is 0 at either rail; a caller that reports a
+    /// number to the user must report this one and not what it asked for.
+    ///
+    /// Two writers outside this type still clamp by hand rather than call it:
+    /// `WeekAdvancer`'s promise settlement and `PressConferenceView`'s preview
+    /// projection. Both are assignments to `career.legacy.mediaReputation` in
+    /// files this change does not own.
     @discardableResult
     mutating func adjustMediaReputation(by delta: Int) -> Int {
         let before = mediaReputation
