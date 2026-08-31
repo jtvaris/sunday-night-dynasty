@@ -1946,25 +1946,13 @@ enum WeekAdvancer {
             weekResultByTeam[game.awayTeamID] = away > home
         }
 
-        // The production signal for the `.stats` motivator. `lastPlayerGameResult`
-        // is the user's game — quick-simmed above, or coached live and left here
-        // by `LiveGameEngine.persist` — and it is the ONLY real box score the
-        // week produces: AI-vs-AI games drop `playerStats` on purpose (see the
-        // note in the sim loop), so the other 30 clubs have nothing to read.
-        // Those rosters are passed `nil` rather than an empty dictionary, which
-        // is the difference between "nobody touched the ball" and "nobody
-        // counted" — the engine only judges production it actually measured.
-        //
-        // The box score covers BOTH sides of that one game, so the user's
-        // opponent gets the same treatment he does.
-        let weekBoxScore = lastPlayerGameResult
-        let statsTeamIDs: Set<UUID> = weekBoxScore.map {
-            Set([$0.boxScore.home.teamID, $0.boxScore.away.teamID])
-        } ?? []
-        let statsByPlayer: [UUID: PlayerGameStats] = Dictionary(
-            (weekBoxScore?.playerStats ?? []).map { ($0.playerID, $0) },
-            uniquingKeysWith: { first, _ in first }
-        )
+        // NOTE: this pass used to also read the week's box score and hand it to
+        // `weeklyMoraleUpdate` as a production signal for the `.stats`
+        // motivator. That was withdrawn — a week moves morale on the RESULT,
+        // shaped by personality, and nothing else. `LockerRoomEngine`'s own
+        // note records why (the term landed opposite to the result, and it
+        // could only ever tax the user's club). `lastPlayerGameResult` is still
+        // read further down for everything that legitimately needs a box score.
 
         for (teamID, won) in weekResultByTeam {
             let roster = (playersByTeam[teamID] ?? []).filter { !$0.isHoldingOut && !$0.isRetired }
@@ -1972,8 +1960,7 @@ enum WeekAdvancer {
             LockerRoomEngine.weeklyMoraleUpdate(
                 players: roster,
                 wonLastGame: won,
-                chemistry: LockerRoomEngine.chemistryScore(players: roster),
-                gameStats: statsTeamIDs.contains(teamID) ? statsByPlayer : nil
+                chemistry: LockerRoomEngine.chemistryScore(players: roster)
             )
         }
 

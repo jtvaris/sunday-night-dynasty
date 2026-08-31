@@ -184,35 +184,6 @@ enum LockerRoomEngine {
     /// Hard cap on the once-a-season settlement (`applyMoraleEffects`).
     static let seasonMoraleSwingCap = 8
 
-    /// Weekly morale a `.stats`-motivated player wins or loses on his box
-    /// score. Same weight as the `.winning` motivator.
-    ///
-    /// OPEN GAP — being 2 against a cap of 3 does NOT make this "well inside"
-    /// anything, because it is added to `delta` in `weeklyMoraleUpdate` BEFORE
-    /// the `weeklyMoraleSwingCap` clamp, and by then the result term has
-    /// usually spent the whole budget. Traced at chemistry 58 (the Average
-    /// band the weekly doc says most clubs sit in), what the term is actually
-    /// worth after the clamp:
-    ///
-    /// - WIN + big game: **0** for seven of the nine archetypes. Base +3 is
-    ///   already at the cap, and `.feelPlayer` (+3), `.dramaQueen` (+2),
-    ///   `.teamLeader`/`.mentor`/`.fieryCompetitor` (+1) are past it. Only
-    ///   `.steadyPerformer`/`.quietProfessional`, damped to +1, receive it.
-    /// - LOSS + big game: +1 or +2 for six of the nine — the reward registers
-    ///   only when the club LOST.
-    /// - WIN + zero touches: −1 or −2 for seven of the nine.
-    /// - LOSS + zero touches: **0** for seven of the nine — base −3 is already
-    ///   at the cap, so being shut out in a defeat costs nothing extra.
-    ///
-    /// So production currently moves morale only in the direction OPPOSITE to
-    /// the result, and the decided behaviour for #3265 ("zero touches loses 2
-    /// morale, a big game gains 2") lands in neither headline case. Closing it
-    /// means picking one of: raise `weeklyMoraleSwingCap`, apply this term
-    /// after the clamp (both widen the weekly envelope past ±3 and will move
-    /// harness bands), or accept the result-opposed mechanic and reword the
-    /// player-facing promise. That is a balance call, so the constant is left
-    /// where the decision found it.
-    static let statsProductionSwing = 2
 
     /// Applies one point of pull toward `moraleBaseline`, never overshooting it.
     private static func reversionStep(from morale: Int) -> Int {
@@ -367,19 +338,25 @@ enum LockerRoomEngine {
     /// Callers pass only rosters that actually PLAYED this week (a bye week is
     /// not a loss) and skip holdouts, whose morale `HoldoutEngine` owns.
     ///
-    /// - Parameter gameStats: this week's box score for THIS roster, keyed by
-    ///   player. It is the production signal the `.stats` motivator needs, and
-    ///   it is optional because most weeks it does not exist: every game but
-    ///   the user's is simulated score-only, so 30 of the 32 rosters have no
-    ///   box score at all. `nil` means "no reading was taken" and the
-    ///   production term is skipped entirely — a club is never judged on
-    ///   numbers nobody counted. An empty-but-non-nil dictionary is a real
-    ///   reading in which nobody registered anything.
+    /// WHY THERE IS NO PRODUCTION TERM. A week's box score used to feed a
+    /// `.stats` reading here, and it was withdrawn deliberately. Three things
+    /// were wrong with it and only the third is a matter of taste. It was added
+    /// BEFORE the ±`weeklyMoraleSwingCap` clamp, which the result term has
+    /// usually already spent, so it registered only in the direction OPPOSITE
+    /// to the result — reward after a defeat, penalty after a win. It could
+    /// only ever land on the user's club and his weekly opponent, because
+    /// theirs is the one real box score a week produces, so no AI club paid it.
+    /// And with `primaryTargetShare` at 1.0 the sim never fields WR4+, TE2,
+    /// RB2, FB or QB2 at all, so the man it actually taxed was the backup who
+    /// could not play his way out of it — measured at −4 to −14 morale over a
+    /// 17-week season — rather than the starter whose usage dried up.
+    ///
+    /// A week moves morale on the RESULT, shaped by personality. That is the
+    /// whole model, and it is why this function no longer takes a box score.
     static func weeklyMoraleUpdate(
         players: [Player],
         wonLastGame: Bool,
-        chemistry: Int,
-        gameStats: [UUID: PlayerGameStats]? = nil
+        chemistry: Int
     ) {
         for player in players {
             var delta = 0
@@ -440,14 +417,10 @@ enum LockerRoomEngine {
                 delta = wonLastGame ? delta + 2 : delta - 2
             }
 
-            // Stats-motivated players live on the ball. The player card has
-            // always promised "wants volume and usage; unhappy if production
-            // drops" while nothing in the season actually read the motivator;
-            // this is that reading, taken weekly off the one box score the
-            // week produces.
-            if player.personality.motivation == .stats, let gameStats {
-                delta += statsProductionDelta(for: player, line: gameStats[player.id])
-            }
+            // `.stats` deliberately has NO weekly term of its own. It used to
+            // read the week's box score, and that reading was withdrawn: the
+            // decision is that a week moves morale on the RESULT, shaped by
+            // personality, and nothing else. See the note on `weeklyMoraleUpdate`.
 
             // Damp: cap the week's movement, then pull one point toward the
             // baseline so nothing runs away over a 17-week season.
@@ -459,113 +432,6 @@ enum LockerRoomEngine {
         }
     }
 
-    /// One week's morale swing for a `.stats`-motivated player, read straight
-    /// off his line in the box score.
-    ///
-    /// Volume is the whole motivator, so the verdict is a touch count first and
-    /// a yardage bar second: a skill player who dressed and never got the ball
-    /// is the "production dropped" case the card copy promises, a genuine big
-    /// game is the reward, and the ordinary Sunday in between moves nothing.
-    ///
-    /// A `nil` line means the man was not DRESSED — not that he dressed and
-    /// registered nothing. `GameSimulator.initializeStats` seeds an all-zero
-    /// line for every player `MedicalEngine.dressed` returns (the whole healthy
-    /// roster), and `finalPlayerStats = Array(statsAccumulator.values)` ships
-    /// the lot unfiltered, so a man who never touched the ball IS in the box
-    /// score with zeroes. Whether any reading exists at all is decided one
-    /// level up by `gameStats`. An injured player is exempt: he had no chance
-    /// at the volume he is being judged on.
-    ///
-    /// OPEN GAP — who the zero-touch branch actually reaches. Since #3719 set
-    /// `PlaySimulator.primaryTargetShare` to 1.0, `Double.random(in: 0..<1) <
-    /// 1.0` is always true, so `weightedReceiverSelection` can only ever pick
-    /// out of `primaryTargets` (top-3 WR + best TE + best RB), and `findQB` /
-    /// `findRB` / `findWR` field only the top man at their spot. So while the
-    /// men above him are on the field, WR4+, TE2, RB2, FB and QB2 cannot
-    /// register a single touch — while the five who ARE fielded practically
-    /// always register one over a full game's attempts.
-    ///
-    /// How long "while" lasts is the whole scope of this gap, and it differs by
-    /// path. `primaryTargets` / `findRB` pick out of the roster slice they are
-    /// HANDED, not out of the depth chart in the abstract:
-    ///
-    /// - QUICK SIM: `GameSimulator` builds its slice once, from
-    ///   `MedicalEngine.dressed`, and never substitutes mid-game — not even for
-    ///   an injury. The backup is shut out for the full sixty minutes.
-    /// - COACHED GAME: `LiveGameEngine` hands `PlaySimulator`
-    ///   `simAvailablePlayers(...)`, which strips `sidelinedIDs` — injured plus
-    ///   manually benched plus the fatigue-rested RB — first, so the sim
-    ///   re-picks its QB/RB/targets from whoever is left and the replacement
-    ///   genuinely plays. RB2 takes a drive's carries every time RB1 crosses
-    ///   `rbRotationFatigueThreshold` (75, a routine event over ~20 carries),
-    ///   and a manually benched starter promotes his backup into the primary
-    ///   group. Those two are player's-team-only by design (an AI game must
-    ///   stay identical to the quick sim); a mid-game INJURY promotes the next
-    ///   man on either side.
-    ///
-    /// The penalty is skewed rather than absolute, then: it almost never
-    /// reaches the starter whose usage dried up (the case the card copy
-    /// describes) and lands on the backup, who on the quick-sim path has no way
-    /// to play his way out of it. It also lands on the user's roster and his
-    /// weekly opponent alone, because theirs is the only real box score the
-    /// week produces — no AI club pays it.
-    ///
-    /// What it costs over a season, measured on the exact model above (start
-    /// morale 70, chemistry 58, 17-week 11-6, zero touches every week, against
-    /// an identical non-`.stats` teammate) across 4,000 shuffles of the result
-    /// order. The tax is UNEVEN and ORDER-DEPENDENT, from 0 to −16:
-    ///
-    /// - `.feelPlayer`, `.dramaQueen`: **0**, every ordering. Their own swing
-    ///   has already spent the ±`weeklyMoraleSwingCap` budget in both
-    ///   directions, so the −2 never survives the clamp.
-    /// - `.teamLeader`, `.mentor`, `.fieryCompetitor`: −4 mean, −10 worst.
-    /// - `.loneWolf`, `.classClown` (and anything on the `default` branch):
-    ///   −7 mean, −16 worst.
-    /// - `.steadyPerformer`, `.quietProfessional`: −12 to −14 (−13 mean),
-    ///   because their damping leaves clamp headroom for the full −2 nearly
-    ///   every week.
-    ///
-    /// Order matters as much as archetype: front-load the six losses and the
-    /// middle two groups land at −9 and −16 rather than their means. Quote the
-    /// means, not a best case — a perfectly alternating schedule is the only
-    /// shape that reads as small. Whether an unplayable backup SHOULD be
-    /// unhappy about usage is a design call, so nothing is exempted here yet.
-    ///
-    /// Only the offensive skill positions are judged. `PlayerGameStats` has no
-    /// column an offensive lineman or a punter can fill (see
-    /// `PlayerGameStats.measures`), and neither a defender's nor a kicker's
-    /// idea of volume is a touch, so they are left alone rather than measured
-    /// against a bar that does not describe their job.
-    ///
-    /// The bars are NFL "big game" reference points, not sim-calibrated ones:
-    /// 300 yards / 3 TDs for a passer, 100 scrimmage yards or a two-score day
-    /// for everyone who carries or catches it.
-    private static func statsProductionDelta(for player: Player, line: PlayerGameStats?) -> Int {
-        guard !player.isInjured else { return 0 }
-
-        let s = line ?? PlayerGameStats(
-            playerID: player.id,
-            playerName: player.fullName,
-            position: player.position
-        )
-
-        let touches: Int
-        let bigGame: Bool
-        switch player.position {
-        case .QB:
-            touches = s.attempts + s.carries
-            bigGame = s.passingYards >= 300 || s.passingTDs >= 3
-        case .RB, .FB, .WR, .TE:
-            touches = s.carries + s.receptions
-            bigGame = (s.rushingYards + s.receivingYards) >= 100
-                || (s.rushingTDs + s.receivingTDs) >= 2
-        case .LT, .LG, .C, .RG, .RT, .DE, .DT, .OLB, .MLB, .CB, .FS, .SS, .K, .P:
-            return 0
-        }
-
-        if touches == 0 { return -statsProductionSwing }
-        return bigGame ? statsProductionSwing : 0
-    }
 
     // MARK: - Chemistry Color Helper
 

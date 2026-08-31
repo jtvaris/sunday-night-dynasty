@@ -3625,7 +3625,7 @@ struct PlayerDetailView: View {
         switch player.personality.motivation {
         case .money:   return "Motivated by contract value; morale drops if underpaid"
         case .winning: return "Thrives on winning; morale suffers during losing streaks"
-        case .stats:   return "Wants volume and usage; unhappy if production drops"
+        case .stats:   return "Wants volume and usage; judges a season by his own numbers"
         case .loyalty: return "Values long-term commitment; bonus morale for extensions"
         case .fame:    return "Motivated by media attention; prefers big-market teams"
         }
