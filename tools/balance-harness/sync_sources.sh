@@ -1009,14 +1009,15 @@ static func calculateChemistry\(
 static func chemistryScore\(
 static func chemistryRating\(
 static func chemistryLabel\(
+enum ResultExpectation \{
 private static func reversionStep\(
 static func weeklyMoraleUpdate\(
-private static func statsProductionDelta\(
+private static func buriedPlayerIDs\(
 EOF
 keeplist_slice "$LOCKERROOM_SOURCE" "$DEVANCHORS" "$DEVSLICE"
 verbatim_guard "$LOCKERROOM_SOURCE" "$DEVSLICE"
-LOCKERROOM_CONSTS="$(grep -E '^[[:space:]]*static let (chemistryPointsPerNetHead|moraleBaseline|weeklyMoraleSwingCap|seasonMoraleSwingCap|statsProductionSwing) =' "$LOCKERROOM_SOURCE")"
-for k in chemistryPointsPerNetHead moraleBaseline weeklyMoraleSwingCap seasonMoraleSwingCap statsProductionSwing; do
+LOCKERROOM_CONSTS="$(grep -E '^[[:space:]]*static let (chemistryPointsPerNetHead|moraleBaseline|weeklyMoraleSwingCap|seasonMoraleSwingCap|oneScoreMargin|blowoutMargin|streakThreshold|leadershipQuorum|leadershipDamping) =' "$LOCKERROOM_SOURCE")"
+for k in chemistryPointsPerNetHead moraleBaseline weeklyMoraleSwingCap seasonMoraleSwingCap oneScoreMargin blowoutMargin streakThreshold leadershipQuorum leadershipDamping; do
   printf '%s\n' "$LOCKERROOM_CONSTS" | grep -qE "static let $k =" \
     || die "LockerRoomEngine constant $k not found in the repo file."
 done
@@ -1029,6 +1030,19 @@ grep -q 'Double(net) / Double(headcount)' "$DEVSLICE" \
   || die "LockerRoom slice lost the PER-CAPITA normalisation (the railed-at-100 defect)."
 grep -q 'return max(0, min(100, Int(raw.rounded())))' "$DEVSLICE" \
   || die "LockerRoom slice lost the 0-100 chemistry clamp (the scenario reports the pinned share)."
+# The weekly model's four newest inputs. Each one silently degrades to "win or
+# lose" if its line goes missing, which is the failure the widened swing cap was
+# introduced to make impossible — so each gets a watch rather than a comment.
+grep -q 'if abs(margin) >= blowoutMargin' "$DEVSLICE" \
+  || die "LockerRoom slice lost the MARGIN term (a 3-point loss would read as a 38-point one)."
+grep -q 'case .favoured:' "$DEVSLICE" \
+  || die "LockerRoom slice lost the EXPECTATION term."
+grep -q 'if streak <= -streakThreshold' "$DEVSLICE" \
+  || die "LockerRoom slice lost the STREAK term."
+grep -q 'buried.contains(player.id)' "$DEVSLICE" \
+  || die "LockerRoom slice lost the PLAYING-TIME term (the one real-world driver for a non-starter)."
+grep -q 'if abs(streak) < streakThreshold' "$DEVSLICE" \
+  || die "LockerRoom slice lost the streak-aware reversion guard (reversion would cancel the streak)."
 # The published ladder the bands below are worded against, and the two branches
 # that consume the rating. Both were dead code while chemistry was pinned at 100.
 for lbl in Elite Strong Average Shaky Toxic; do

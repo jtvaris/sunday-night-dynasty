@@ -1940,10 +1940,58 @@ enum WeekAdvancer {
         // loss — and holdouts are skipped because `HoldoutEngine` owns their
         // morale while they are away from the facility.
         var weekResultByTeam: [UUID: Bool] = [:]
+        var weekMarginByTeam: [UUID: Int] = [:]
+        var weekOpponentByTeam: [UUID: UUID] = [:]
         for game in weekGamesForAttendance {
             guard let home = game.homeScore, let away = game.awayScore, home != away else { continue }
             weekResultByTeam[game.homeTeamID] = home > away
             weekResultByTeam[game.awayTeamID] = away > home
+            // The margin used to be computed and discarded on the line above.
+            weekMarginByTeam[game.homeTeamID] = home - away
+            weekMarginByTeam[game.awayTeamID] = away - home
+            weekOpponentByTeam[game.homeTeamID] = game.awayTeamID
+            weekOpponentByTeam[game.awayTeamID] = game.homeTeamID
+        }
+
+        // Current run of results per club, newest first. A locker room responds
+        // to the run rather than to the last game, so the morale pass needs the
+        // length of it, signed: +3 is three straight wins, -4 is four straight
+        // defeats. Ties break a streak without starting one.
+        var resultsByTeam: [UUID: [(week: Int, won: Bool)]] = [:]
+        for game in fetchAllGamesForSeason(seasonYear: season, modelContext: modelContext) where game.isPlayed {
+            guard let home = game.homeScore, let away = game.awayScore, home != away else { continue }
+            resultsByTeam[game.homeTeamID, default: []].append((game.week, home > away))
+            resultsByTeam[game.awayTeamID, default: []].append((game.week, away > home))
+        }
+        var streakByTeam: [UUID: Int] = [:]
+        for (teamID, results) in resultsByTeam {
+            let newestFirst = results.sorted { $0.week > $1.week }
+            guard let latest = newestFirst.first else { continue }
+            var run = 0
+            for result in newestFirst {
+                guard result.won == latest.won else { break }
+                run += 1
+            }
+            streakByTeam[teamID] = latest.won ? run : -run
+        }
+
+        // What the club had a right to expect, read off records rather than
+        // ratings — that is how a dressing room frames it ("we lost to a 2-6
+        // team"). Records are read AFTER this week's result is in, which is the
+        // honest reading: the player judging the week already knows it.
+        // Below four games a record says nothing, so the term stays neutral.
+        func weekExpectation(for teamID: UUID) -> LockerRoomEngine.ResultExpectation {
+            guard let opponentID = weekOpponentByTeam[teamID],
+                  let us = teamsByID[teamID],
+                  let them = teamsByID[opponentID] else { return .even }
+            let ourGames = us.wins + us.losses + us.ties
+            let theirGames = them.wins + them.losses + them.ties
+            guard ourGames >= 4, theirGames >= 4 else { return .even }
+            let ours = Double(us.wins) / Double(ourGames)
+            let theirs = Double(them.wins) / Double(theirGames)
+            if ours - theirs >= 0.25 { return .favoured }
+            if theirs - ours >= 0.25 { return .underdog }
+            return .even
         }
 
         // NOTE: this pass used to also read the week's box score and hand it to
@@ -1960,7 +2008,10 @@ enum WeekAdvancer {
             LockerRoomEngine.weeklyMoraleUpdate(
                 players: roster,
                 wonLastGame: won,
-                chemistry: LockerRoomEngine.chemistryScore(players: roster)
+                chemistry: LockerRoomEngine.chemistryScore(players: roster),
+                margin: weekMarginByTeam[teamID] ?? 0,
+                expectation: weekExpectation(for: teamID),
+                streak: streakByTeam[teamID] ?? 0
             )
         }
 

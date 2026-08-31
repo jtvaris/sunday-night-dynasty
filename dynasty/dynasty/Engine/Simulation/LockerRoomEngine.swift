@@ -179,13 +179,93 @@ enum LockerRoomEngine {
     /// Hard cap on how far ONE game week may move a player's morale. The
     /// archetype table below can swing ±9 raw; damped it stays inside ±3 so a
     /// losing streak bleeds morale instead of hemorrhaging it.
-    static let weeklyMoraleSwingCap = 3
+    /// Widened from 3 when the weekly model stopped being "win or lose".
+    ///
+    /// Three was right for a single ±3 result term: it WAS the term, so the cap
+    /// never bound. It became wrong the moment margin, expectation, streak,
+    /// playing time and injury started contributing, because a saturated cap
+    /// silently discards whichever input is added last — that is exactly how the
+    /// withdrawn production term came to register only opposite to the result.
+    /// Six leaves every term room to be heard while keeping a bad week's raw
+    /// movement below a tenth of the 1-100 scale.
+    static let weeklyMoraleSwingCap = 6
+
+    /// A game decided by three points or fewer. The room reads it as "we were
+    /// right there", and it moves morale about half what an ordinary result does.
+    static let oneScoreMargin = 3
+
+    /// Three scores. Past this the result stops being a game and starts being a
+    /// statement about the team.
+    static let blowoutMargin = 21
+
+    /// Consecutive results before a run becomes a narrative. Two of anything is
+    /// still noise; three is what a locker room, a press room and an owner all
+    /// start calling a streak.
+    static let streakThreshold = 3
+
+    /// How many `.teamLeader`/`.mentor` men it takes to hold a room together.
+    /// One respected veteran is a voice; two is a culture.
+    static let leadershipQuorum = 2
+
+    /// What that culture is worth against a bad week — a quarter off the drop,
+    /// and nothing at all off a good one.
+    static let leadershipDamping = 0.75
+
+    /// How the week's result stood against what the club had a right to expect,
+    /// read off records rather than ratings because that is how players, press
+    /// and owners actually frame it.
+    enum ResultExpectation {
+        /// Clearly the better side on paper. Losing here costs extra.
+        case favoured
+        /// Clearly the weaker side. An upset lifts; the expected defeat is
+        /// half-forgiven.
+        case underdog
+        /// Too close to call, or too early in the season for a record to mean
+        /// anything. No adjustment.
+        case even
+    }
 
     /// Hard cap on the once-a-season settlement (`applyMoraleEffects`).
     static let seasonMoraleSwingCap = 8
 
 
     /// Applies one point of pull toward `moraleBaseline`, never overshooting it.
+    /// Who is buried in his own position room this week.
+    ///
+    /// WHY NOT THE DEPTH CHART. `DepthChart` is stored on `Career`
+    /// (`Career.depthChartData`), not on `Team` — it exists for the user's club
+    /// and nowhere else. A depth-chart reading would therefore tax the human's
+    /// roster and leave all 31 AI clubs untouched, which is precisely the
+    /// asymmetry that sank the production term this replaces. Rank within the
+    /// position room is the signal every club has.
+    ///
+    /// "Buried" is third or deeper at his own position: the starter and the man
+    /// directly behind him both have a credible route onto the field, and the
+    /// morale question here is not "am I the starter" — plenty of career
+    /// backups are content — but "is there any path to playing at all".
+    ///
+    /// Ties on `overall` resolve by id so the answer is stable from week to
+    /// week; a man should not drift in and out of unhappiness because two
+    /// team-mates share a rating.
+    private static func buriedPlayerIDs(in players: [Player]) -> Set<UUID> {
+        var byPosition: [Position: [Player]] = [:]
+        for player in players {
+            byPosition[player.position, default: []].append(player)
+        }
+        var buried: Set<UUID> = []
+        for (_, room) in byPosition {
+            let ranked = room.sorted {
+                $0.overall != $1.overall
+                    ? $0.overall > $1.overall
+                    : $0.id.uuidString < $1.id.uuidString
+            }
+            for (index, player) in ranked.enumerated() where index >= 2 {
+                buried.insert(player.id)
+            }
+        }
+        return buried
+    }
+
     private static func reversionStep(from morale: Int) -> Int {
         if morale < moraleBaseline { return 1 }
         if morale > moraleBaseline { return -1 }
@@ -356,17 +436,76 @@ enum LockerRoomEngine {
     static func weeklyMoraleUpdate(
         players: [Player],
         wonLastGame: Bool,
-        chemistry: Int
+        chemistry: Int,
+        margin: Int = 0,
+        expectation: ResultExpectation = .even,
+        streak: Int = 0
     ) {
+        // Who is buried in his own position room, computed ONCE for the roster.
+        let buried = buriedPlayerIDs(in: players)
+
+        // Leaders damp a bad week rather than adding a good one (see below).
+        let leaders = players.filter {
+            $0.personality.archetype == .teamLeader || $0.personality.archetype == .mentor
+        }.count
+
         for player in players {
             var delta = 0
 
-            // Base shift from win/loss
-            if wonLastGame {
-                delta += 3
+            // 1. The result, shaped by HOW the game went. A three-point loss to
+            //    a good side and a 38-point home humiliation are not the same
+            //    week, and until now the engine could not tell them apart: it
+            //    read both scores and threw the margin away on the line that
+            //    wrote `home > away`.
+            if abs(margin) >= blowoutMargin {
+                delta = wonLastGame ? 3 : -3
+            } else if abs(margin) <= oneScoreMargin {
+                delta = wonLastGame ? 1 : -1
             } else {
-                delta -= 3
+                delta = wonLastGame ? 2 : -2
             }
+
+            // 2. Against expectation. Losing to a side you should beat stings
+            //    extra; beating one you should not lifts extra; losing to a
+            //    clearly better side is half-forgiven. Expectation is read off
+            //    records, which is how players and press actually frame it, and
+            //    it stays `.even` early in the season when a record means
+            //    nothing yet.
+            switch expectation {
+            case .favoured:
+                if !wonLastGame { delta -= 1 }
+            case .underdog:
+                delta += 1          // upset win lifts; expected loss forgiven
+            case .even:
+                break
+            }
+
+            // 3. Trajectory. A locker room responds to the run, not the last
+            //    result: one loss at 5-1 is noise, four straight is a crisis.
+            //    Losing streaks bite harder than winning streaks lift, which is
+            //    the asymmetry every dressing room in the sport reports.
+            if streak <= -streakThreshold {
+                delta -= min(2, abs(streak) - (streakThreshold - 1))
+            } else if streak >= streakThreshold {
+                delta += 1
+            }
+
+            // 4. Playing time — the single largest real-world morale driver for
+            //    anyone who is not a starter, and the one the withdrawn
+            //    production term was reaching for. A buried man is unhappy
+            //    because he does not play, which is knowable from the roster
+            //    for all 32 clubs; he was previously judged on a box score that
+            //    structurally could not exist for him, on the user's club alone.
+            //    A `.stats` man feels it twice over: usage is the whole of what
+            //    he is measured by.
+            if !player.isInjured && buried.contains(player.id) {
+                delta -= player.personality.motivation == .stats ? 2 : 1
+            }
+
+            // 5. Injury. Being hurt is isolating and, for a man on an expiring
+            //    deal, frightening — he is not in the building's week and his
+            //    next contract is being decided without him.
+            if player.isInjured { delta -= 1 }
 
             // Chemistry still has a mild weekly influence, on the same
             // `chemistryLabel` boundaries the season-end pass uses: a Strong
@@ -417,15 +556,30 @@ enum LockerRoomEngine {
                 delta = wonLastGame ? delta + 2 : delta - 2
             }
 
-            // `.stats` deliberately has NO weekly term of its own. It used to
-            // read the week's box score, and that reading was withdrawn: the
-            // decision is that a week moves morale on the RESULT, shaped by
-            // personality, and nothing else. See the note on `weeklyMoraleUpdate`.
+            // `.stats` is handled in term 4, by USAGE rather than by output.
+            // The distinction is the whole lesson of the withdrawn production
+            // term: a man buried at WR4 is unhappy because he does not play,
+            // and that is true of him on every roster in the league whether or
+            // not anyone wrote down a box score for his club that week.
+
+            // 6. Leadership holds the room together in bad weeks. It damps the
+            //    downside rather than adding a constant to both directions:
+            //    what veterans demonstrably do is stop a bad run becoming a
+            //    rout, not make a win sweeter.
+            if leaders >= leadershipQuorum && delta < 0 {
+                delta = Int((Double(delta) * leadershipDamping).rounded())
+            }
 
             // Damp: cap the week's movement, then pull one point toward the
-            // baseline so nothing runs away over a 17-week season.
+            // baseline — but NOT while a real streak is running. Reversion
+            // exists so a season does not run away; applied during a streak it
+            // cancels the very accumulation the streak term is there to build,
+            // which is how a four-game collapse used to end the week roughly
+            // where it started.
             delta = max(-weeklyMoraleSwingCap, min(weeklyMoraleSwingCap, delta))
-            delta += reversionStep(from: player.morale)
+            if abs(streak) < streakThreshold {
+                delta += reversionStep(from: player.morale)
+            }
 
             // Apply clamped morale update
             player.morale = max(1, min(100, player.morale + delta))
