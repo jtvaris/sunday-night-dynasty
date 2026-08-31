@@ -172,6 +172,15 @@ enum MultiSeasonSmokeTest {
         var previousSeasonWins: [UUID: Int] = [:]   // F-04: last season's table, for stickiness
         var finalTable: [BalanceRow] = []           // F-04: newest live reading of this season's table
         var gamesInTable = 0
+        // Rookie-starts pass: the mandate slate every club was on when THIS
+        // season kicked off, and the newest live reading of what it has scored.
+        // Both are seeded at the first rollover, not here — the harness opens in
+        // `.coachingChanges` (see `Career.init`), so its first cycle is an
+        // offseason with no games in it at all.
+        var mandateAtKickoff: [UUID: MandateSnapshot] = [:]
+        var rookieSample: [RookieStartsRow] = []
+        var rookieCohorts: [String: RookieCohort] = [:]
+        var rookieSeasonsMeasured = 0
         var hcSnapshot = headCoachByTeam(context: context)
         let maxAdvances = seasons * 60 + 60   // watchdog: infinite-loop guard
 
@@ -202,6 +211,19 @@ enum MultiSeasonSmokeTest {
                 if played > gamesInTable {
                     gamesInTable = played
                     finalTable = snapshot
+                    // Same trick, same reason: `WeekAdvancer.startNewSeason`
+                    // clears every `gamesStartedThisSeason` (the #40 loop beside
+                    // the games-played one), so the rookie count has to be taken
+                    // while the season is still standing. This condition only
+                    // fires on a week that put games on the board, and playoff
+                    // results never move `Team.wins` (`updateTeamRecords`
+                    // returns early for them), so the last reading it keeps is
+                    // the one taken with the regular season complete — the same
+                    // state the owner's season review grades in, at
+                    // `advanceOffseasonPhase`'s `.superBowl` case.
+                    rookieSample = captureRookieStarts(
+                        career: career, mandates: mandateAtKickoff, context: context
+                    )
                 }
             }
 
@@ -311,8 +333,25 @@ enum MultiSeasonSmokeTest {
                     previousWins: &previousSeasonWins,
                     context: context
                 )
+                let seasonHadGames = gamesInTable > 0
                 finalTable = []
                 gamesInTable = 0
+
+                // Is the owner's "Develop 3 Rookies" mandate reachable at all?
+                // The sample was taken with the finished season's starts still
+                // on the players; the mandates it is scored against were read
+                // at that season's kickoff.
+                if printRookieStarts(
+                    seasonLabel: finishedSeason, rows: rookieSample,
+                    seasonHadGames: seasonHadGames, cohorts: &rookieCohorts
+                ) {
+                    rookieSeasonsMeasured += 1
+                }
+                rookieSample = []
+                // …and the slate for the season that just kicked off. This
+                // advance IS the one that ran `startNewSeason`, so these are the
+                // mandates the league is playing under from here to week 18.
+                mandateAtKickoff = captureMandates(career: career, context: context)
 
                 // OVR-drift diagnostics: who left, who arrived, and how the
                 // yearsPro cohorts are trending.
@@ -332,6 +371,8 @@ enum MultiSeasonSmokeTest {
         let finalOVR = leagueAverageOVR(context: context)
         print(String(format: "SMOKE: ===== done: %d seasons, %d advances, firedNotes=%d, final avgOVR=%.2f (baseline %.2f) =====",
                      seasonsCompleted, advances, firedNotes, finalOVR, baselineOVR))
+
+        printRookieStartsSummary(seasons: rookieSeasonsMeasured, cohorts: rookieCohorts)
 
         // R39: wall-clock summary.
         let totalS = CFAbsoluteTimeGetCurrent() - runStart
@@ -998,6 +1039,351 @@ enum MultiSeasonSmokeTest {
             print("SMOKE: warn balance season=\(seasonLabel) \(detail) — season 1 has no prior table (hard from season 2)")
         } else {
             print("SMOKE: ANOMALY season=\(seasonLabel) balance bands missed: \(detail)")
+        }
+    }
+
+    // MARK: - Rookie starts (owner goal "Develop 3 Rookies")
+
+    /// Prints a rookie-starts line and, when `PERF_SMOKE_ROOKIE_LOG` is set,
+    /// appends it to `rookie-starts.log` in the app container.
+    ///
+    /// WHY the second copy exists. `print` reaches a reader only through a
+    /// console attached for the life of the process
+    /// (`simctl launch --console-pty`), and everything printed is gone the
+    /// moment that process is not there to print it. Measuring this goal lost
+    /// four runs that way — the app force-quit mid-run, and twice the simulator
+    /// device itself was shut down underneath it — each time discarding seasons
+    /// that had already been simulated and reported. A multi-season run costs
+    /// minutes per season, so the finished seasons are worth keeping even when
+    /// the run does not finish. The mirror is append-only and lives in the app
+    /// container, so `simctl get_app_container <udid> <bundle id> data` fetches
+    /// whatever the run got through before it stopped, and a later run adds to
+    /// it rather than replacing it. Off unless the env var asks for it, and the
+    /// whole file is `#if DEBUG`.
+    private static func emitRookieLine(_ line: String) {
+        print(line)
+        guard ProcessInfo.processInfo.environment["PERF_SMOKE_ROOKIE_LOG"] != nil,
+              let directory = FileManager.default.urls(
+                  for: .documentDirectory, in: .userDomainMask
+              ).first,
+              let payload = (line + "\n").data(using: .utf8)
+        else { return }
+        let url = directory.appendingPathComponent("rookie-starts.log")
+        if let handle = try? FileHandle(forWritingTo: url) {
+            defer { try? handle.close() }
+            _ = try? handle.seekToEnd()
+            try? handle.write(contentsOf: payload)
+        } else {
+            try? payload.write(to: url)
+        }
+    }
+
+    /// Which mandate one club was handed at kickoff, and the `developRookies`
+    /// goal itself when it got one.
+    ///
+    /// Both fields come from the shipping engine, read at the moment
+    /// `WeekAdvancer.startNewSeason` reads them: `OwnerGoalsEngine.rosterTier`
+    /// ranks the club against the league, and `generateSeasonGoals` decides what
+    /// the owner asks for. Recording them at kickoff rather than re-deriving
+    /// them in December matters — a club that opens the season bottom-six can
+    /// finish it anywhere, and the mandate it is graded on is the one it was
+    /// given, not the one its December roster would have earned.
+    struct MandateSnapshot {
+        /// `.contender` / `.middle` / `.rebuilding`, as a string so the tier
+        /// enum needs no conformances it does not already declare.
+        let tierLabel: String
+        /// The goal as `generateSeasonGoals` built it, or `nil` when this club
+        /// was not issued one.
+        ///
+        /// Non-`nil` is exactly the issue test, not an approximation of it: the
+        /// `.developRookies` goal is appended in one place, the `.rebuilding`
+        /// arm's `else owner.prefersWinNow` branch. A rebuilding club whose
+        /// owner wants to win now is handed "Win 6+ Games" instead and lands
+        /// here as `nil`.
+        let goal: SeasonGoal?
+    }
+
+    /// What one club's finished season scored against that mandate.
+    struct RookieStartsRow {
+        let tierLabel: String
+        /// This club was actually handed the goal (rebuilding tier, patient
+        /// owner). Every other row is the same goal scored counterfactually —
+        /// see `captureRookieStarts`.
+        let wasIssued: Bool
+        /// `team.wins + team.losses + team.ties`. Regular season only:
+        /// `WeekAdvancer.updateTeamRecords` returns early for playoff games.
+        let teamGames: Int
+        /// `max(1, teamGames / 3)` — the starts bar inside
+        /// `OwnerGoalsEngine.evaluateGoalProgress`. Re-derived here for the
+        /// printout ONLY; `rookiesAtBar` below is the engine's own count, not a
+        /// second implementation of it.
+        let starterBar: Int
+        /// `SeasonGoal.progress` after `OwnerGoalsEngine.evaluateGoalProgress`:
+        /// men with `yearsPro <= 1` who started at least `starterBar` games.
+        let rookiesAtBar: Int
+        /// `SeasonGoal.target` off `generateSeasonGoals` — the "3" in the title.
+        let target: Int
+        /// `SeasonGoal.isAchieved`.
+        let achieved: Bool
+        /// Rostered men the goal's `yearsPro <= 1` filter admits, split by the
+        /// two values it accepts. Deliberately NOT labelled "rookies" and
+        /// "second-year men": `yearsPro` is bumped at training camp
+        /// (`PlayerDevelopmentEngine.applyAgeRegression`, run from the
+        /// `.trainingCamp` phase), which sits BETWEEN a man's draft and his
+        /// first regular season — so which of these two buckets a first-year
+        /// player lands in is a measurement, not an assumption.
+        let menAtYearsPro0: Int
+        let menAtYearsPro1: Int
+        /// Σ `gamesStartedThisSeason` over those men.
+        let startsByRookies: Int
+        /// The most starts any single one of them made.
+        let bestRookieStarts: Int
+    }
+
+    /// Reads every club's kickoff mandate off the shipping engine.
+    ///
+    /// Costs two league-wide player fetches per club (one inside `rosterTier`,
+    /// one inside the `generateSeasonGoals` fallback path) — 64 fetches, once a
+    /// season, in an in-memory store. Do not move it onto a per-week path.
+    private static func captureMandates(
+        career: Career, context: ModelContext
+    ) -> [UUID: MandateSnapshot] {
+        let teams = (try? context.fetch(FetchDescriptor<Team>())) ?? []
+        var out: [UUID: MandateSnapshot] = [:]
+        for team in teams {
+            guard let owner = team.owner else { continue }
+            let tier = OwnerGoalsEngine.rosterTier(team: team, career: career)
+            let label: String
+            switch tier {
+            case .contender:  label = "contender"
+            case .middle:     label = "middle"
+            case .rebuilding: label = "rebuilding"
+            }
+            let slate = OwnerGoalsEngine.generateSeasonGoals(
+                team: team, owner: owner, career: career
+            )
+            out[team.id] = MandateSnapshot(
+                tierLabel: label,
+                goal: slate.first { $0.type == .developRookies }
+            )
+        }
+        return out
+    }
+
+    /// Scores the `developRookies` goal for all 32 clubs.
+    ///
+    /// ## Why every club and not only the ones that were issued it
+    ///
+    /// The goal reaches roughly six clubs a season (the bottom fifth,
+    /// `rosterTier`'s `band = strengths.count / 5`) and only the patient half of
+    /// those, and exactly ONE of them is the save's own franchise. Six issued
+    /// club-seasons per run is not a distribution. So every club is scored
+    /// against the same goal object, and `wasIssued` records which readings are
+    /// the real mandate and which are the counterfactual "what would this club
+    /// have scored if its owner had asked". The goal object is the one
+    /// `generateSeasonGoals` actually built for an issued club this season, so
+    /// the target and the predicate are not re-typed here; a season in which no
+    /// club was issued one produces no reading at all rather than an invented
+    /// goal.
+    ///
+    /// The count itself comes from `OwnerGoalsEngine.evaluateGoalProgress` —
+    /// the same call `WeekAdvancer` makes for the owner's season review — so
+    /// the number printed below is the number the player is graded on, not a
+    /// harness re-implementation of it.
+    private static func captureRookieStarts(
+        career: Career,
+        mandates: [UUID: MandateSnapshot],
+        context: ModelContext
+    ) -> [RookieStartsRow] {
+        guard let template = mandates.values.compactMap(\.goal).first else { return [] }
+        let teams = (try? context.fetch(FetchDescriptor<Team>())) ?? []
+        guard !teams.isEmpty else { return [] }
+
+        // One league-wide fetch, grouped by `teamID` — exactly the population
+        // `Team.currentRoster()` resolves per club (same predicate, no career
+        // filter needed in a single-career store). Practice-squad men and
+        // retirees carry `teamID == nil` and are correctly outside it.
+        let players = (try? context.fetch(FetchDescriptor<Player>())) ?? []
+        let byTeam = Dictionary(grouping: players.filter { $0.teamID != nil }, by: { $0.teamID! })
+
+        return teams.compactMap { team -> RookieStartsRow? in
+            guard let mandate = mandates[team.id] else { return nil }
+            let scored = OwnerGoalsEngine.evaluateGoalProgress(
+                goals: [mandate.goal ?? template], team: team, career: career
+            )
+            guard let goal = scored.first else { return nil }
+
+            let teamGames = team.wins + team.losses + team.ties
+            let young = (byTeam[team.id] ?? []).filter { $0.yearsPro <= 1 }
+            return RookieStartsRow(
+                tierLabel: mandate.tierLabel,
+                wasIssued: mandate.goal != nil,
+                teamGames: teamGames,
+                starterBar: max(1, teamGames / 3),
+                rookiesAtBar: goal.progress,
+                target: goal.target ?? 0,
+                achieved: goal.isAchieved,
+                menAtYearsPro0: young.filter { $0.yearsPro == 0 }.count,
+                menAtYearsPro1: young.filter { $0.yearsPro == 1 }.count,
+                startsByRookies: young.reduce(0) { $0 + $1.gamesStartedThisSeason },
+                bestRookieStarts: young.map(\.gamesStartedThisSeason).max() ?? 0
+            )
+        }
+    }
+
+    /// Pooled readings for one cohort of club-seasons.
+    struct RookieCohort {
+        var clubSeasons = 0
+        /// Club-seasons whose `rookiesAtBar` reached the goal's target.
+        var atTarget = 0
+        /// `rookiesAtBar` counts, bucketed 0 / 1 / 2 / 3 / 4+.
+        var histogram = [Int](repeating: 0, count: 5)
+        var sumAtBar = 0
+        var sumStarts = 0
+        var sumYearsPro0 = 0
+        var sumYearsPro1 = 0
+        var sumBest = 0
+        var bars = Set<Int>()
+
+        mutating func add(_ row: RookieStartsRow) {
+            clubSeasons += 1
+            if row.achieved { atTarget += 1 }
+            histogram[min(4, max(0, row.rookiesAtBar))] += 1
+            sumAtBar += row.rookiesAtBar
+            sumStarts += row.startsByRookies
+            sumYearsPro0 += row.menAtYearsPro0
+            sumYearsPro1 += row.menAtYearsPro1
+            sumBest += row.bestRookieStarts
+            bars.insert(row.starterBar)
+        }
+
+        mutating func merge(_ other: RookieCohort) {
+            clubSeasons += other.clubSeasons
+            atTarget += other.atTarget
+            for index in histogram.indices { histogram[index] += other.histogram[index] }
+            sumAtBar += other.sumAtBar
+            sumStarts += other.sumStarts
+            sumYearsPro0 += other.sumYearsPro0
+            sumYearsPro1 += other.sumYearsPro1
+            sumBest += other.sumBest
+            bars.formUnion(other.bars)
+        }
+
+        var barLabel: String {
+            guard let low = bars.min(), let high = bars.max() else { return "-" }
+            return low == high ? "\(low)" : "\(low)-\(high)"
+        }
+
+        func line(prefix: String, cohort: String) -> String {
+            let n = Double(max(1, clubSeasons))
+            return String(
+                format: "%@ cohort=%@ n=%d bar=%@ atTarget=%d (%.0f%%) "
+                      + "hist[0,1,2,3,4+]=%d/%d/%d/%d/%d meanAtBar=%.2f "
+                      + "menYP0=%.1f menYP1=%.1f startsByRookies=%.1f bestRookie=%.1f",
+                prefix, cohort, clubSeasons, barLabel,
+                atTarget, Double(atTarget) / n * 100,
+                histogram[0], histogram[1], histogram[2], histogram[3], histogram[4],
+                Double(sumAtBar) / n,
+                Double(sumYearsPro0) / n, Double(sumYearsPro1) / n,
+                Double(sumStarts) / n, Double(sumBest) / n
+            )
+        }
+    }
+
+    /// The three cohorts every season is reported in, widest first.
+    ///
+    /// * `league` — all 32 clubs. Context: it says whether the bar is hard for
+    ///   everyone or only for the clubs that are asked to clear it.
+    /// * `rebuilding` — the tier the goal is generated for, both owner
+    ///   temperaments. This is the population the mandate is aimed at.
+    /// * `issued` — rebuilding AND a patient owner, i.e. the clubs that were
+    ///   actually handed the goal. The only cohort that is not counterfactual,
+    ///   and the smallest.
+    private static let rookieCohortOrder = ["league", "rebuilding", "issued"]
+
+    /// One `SMOKE: diag rookieStarts` line per cohort per completed season.
+    ///
+    /// Returns `true` when the season produced a reading.
+    ///
+    /// Two ways it does not, and they are not the same thing. The harness opens
+    /// in `.coachingChanges`, so its first cycle is an offseason with no games
+    /// in it at all — that one is expected and stays silent. A cycle that DID
+    /// play games but produced no rows means no club was issued the goal at
+    /// kickoff, i.e. the bottom six all had win-now owners; that one prints,
+    /// because a season quietly missing from the pool would bias the share.
+    @discardableResult
+    private static func printRookieStarts(
+        seasonLabel: Int,
+        rows: [RookieStartsRow],
+        seasonHadGames: Bool,
+        cohorts: inout [String: RookieCohort]
+    ) -> Bool {
+        let played = rows.filter { $0.teamGames > 0 }
+        guard !played.isEmpty else {
+            if seasonHadGames {
+                emitRookieLine("SMOKE: note rookieStarts season=\(seasonLabel) no reading — "
+                               + "no club was issued \"Develop 3 Rookies\" at kickoff "
+                               + "(every rebuilding-tier owner wanted to win now)")
+            }
+            return false
+        }
+
+        var seasonCohorts: [String: RookieCohort] = [:]
+        for row in played {
+            seasonCohorts["league", default: RookieCohort()].add(row)
+            if row.tierLabel == "rebuilding" {
+                seasonCohorts["rebuilding", default: RookieCohort()].add(row)
+                if row.wasIssued {
+                    seasonCohorts["issued", default: RookieCohort()].add(row)
+                }
+            }
+        }
+
+        let target = played.first?.target ?? 0
+        for name in rookieCohortOrder {
+            guard let cohort = seasonCohorts[name] else {
+                emitRookieLine("SMOKE: diag rookieStarts season=\(seasonLabel) cohort=\(name) n=0 "
+                               + "(no club fell in this cohort)")
+                continue
+            }
+            emitRookieLine(cohort.line(
+                prefix: "SMOKE: diag rookieStarts season=\(seasonLabel) target=\(target)",
+                cohort: name
+            ))
+            cohorts[name, default: RookieCohort()].merge(cohort)
+        }
+        return true
+    }
+
+    /// The run-level answer, pooled over every measured season.
+    ///
+    /// Deliberately has NO pass/fail band. Nothing in the repo has ever measured
+    /// this, so there is no established share to gate against, and inventing one
+    /// here would put a number on screen that no function computes. The line
+    /// states what was measured and leaves the bar where `evaluateGoalProgress`
+    /// has it.
+    private static func printRookieStartsSummary(
+        seasons: Int, cohorts: [String: RookieCohort]
+    ) {
+        guard seasons > 0 else {
+            emitRookieLine("SMOKE: diag rookieStarts SUMMARY — no season produced a reading")
+            return
+        }
+        for name in rookieCohortOrder {
+            guard let cohort = cohorts[name], cohort.clubSeasons > 0 else { continue }
+            emitRookieLine(cohort.line(
+                prefix: "SMOKE: diag rookieStarts SUMMARY seasons=\(seasons)",
+                cohort: name
+            ))
+        }
+        if let issued = cohorts["issued"], issued.clubSeasons > 0 {
+            let share = Double(issued.atTarget) / Double(issued.clubSeasons) * 100
+            emitRookieLine(String(
+                format: "SMOKE: note rookieStarts — of %d club-seasons that were actually handed "
+                      + "\"Develop 3 Rookies\", %d cleared it (%.0f%%). Bar unchanged: "
+                      + "max(1, teamGames/3) starts, OwnerGoalsEngine.evaluateGoalProgress.",
+                issued.clubSeasons, issued.atTarget, share
+            ))
         }
     }
 
