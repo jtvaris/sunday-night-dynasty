@@ -1560,6 +1560,17 @@ struct ScoutingHubView: View {
                     ? { sendScoutsToCombine() }
                     : nil,
                 canAffordTrip: canAffordCombineTrip,
+                // #3424 — a door back into the report. It was raised once, from
+                // inside `sendScoutsToCombine`, and could not be reopened; the
+                // one thing it could not say at that moment was what the week
+                // did to a Stock Faller's projected round, because the drift
+                // that moves it fires when the club LEAVES the phase. Offered
+                // whenever `combineMedia` has something in it — `loadData`
+                // rebuilds it from what is stamped on the class, so this
+                // survives a relaunch and outlives the phase.
+                onOpenReport: combineMedia.isEmpty
+                    ? nil
+                    : { activeHubSheet = .combineReport },
                 // The gate the CTA was missing: `applyCombineScouting` refuses
                 // on an empty scout list, so at 0/8 seats the trip charges the
                 // flight and files nothing.
@@ -1898,6 +1909,25 @@ private struct CombineReportSheet: View {
                                 .foregroundStyle(Color.textSecondary)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
+
+                        // #3424. The arrows only exist on a REOPENED report —
+                        // the media board moves when the club leaves the
+                        // combine, so during the week there is nothing to
+                        // print — and this says precisely what they measure.
+                        // The combine's drift and the mock re-read that follows
+                        // it both land at that transition, so the honest claim
+                        // is "the board has moved him", not "the drills did".
+                        if hasProjectionMoves {
+                            HStack(alignment: .top, spacing: 8) {
+                                Image(systemName: "arrow.left.arrow.right")
+                                    .font(.caption)
+                                    .foregroundStyle(Color.accentGold)
+                                Text("An arrow on a round is where the media board had him when the combine opened against where it has him now. It is the board's move, not a grade of yours.")
+                                    .font(.caption)
+                                    .foregroundStyle(Color.textSecondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
                     }
                     .listRowBackground(Color.backgroundSecondary)
                 }
@@ -2009,6 +2039,7 @@ private struct CombineReportSheet: View {
         let read = ProspectFog.read(prospect)
         let grade = ScoutBoardReads.gradeText(prospect)
         let gradeTint = read.band.map { Color.forGrade($0) } ?? Color.textTertiary
+        let move = projectionMove(for: prospect)
         let round = prospect.draftProjection.map { "Rd \($0)" } ?? "\u{2014}"
         let slot = boardSlots[prospect.id].map { "your #\($0)" } ?? "not on your board"
         let mock = DraftIntel.consensusRank(for: prospect.id).map { "mock #\($0)" }
@@ -2017,9 +2048,23 @@ private struct CombineReportSheet: View {
                 .font(.system(size: DSType.Size.caption, weight: .heavy))
                 .foregroundStyle(grade == "\u{2014}" ? Color.textTertiary : gradeTint)
             contextDivider
-            Text(round)
-                .font(.system(size: DSType.Size.caption, weight: .medium).monospacedDigit())
-                .foregroundStyle(Color.textSecondary)
+            // #3424 — a Stock Faller row named a man and left his projection
+            // alone, so the one number the headline was about was the one the
+            // reader had to go and look up. When the board HAS moved him since
+            // the combine opened, the cell prints the move rather than the
+            // destination.
+            if let move {
+                Text("Rd \(move.from) \u{2192} Rd \(move.to)")
+                    .font(.system(size: DSType.Size.caption, weight: .bold).monospacedDigit())
+                    // A LOWER round number is better, so a fall is a rise in
+                    // the integer — same direction test `ProjectionMove.isRise`
+                    // makes.
+                    .foregroundStyle(move.to < move.from ? Color.success : Color.danger)
+            } else {
+                Text(round)
+                    .font(.system(size: DSType.Size.caption, weight: .medium).monospacedDigit())
+                    .foregroundStyle(Color.textSecondary)
+            }
             contextDivider
             Text(slot)
                 .font(.system(size: DSType.Size.caption, weight: .medium).monospacedDigit())
@@ -2030,6 +2075,37 @@ private struct CombineReportSheet: View {
                     .font(.system(size: DSType.Size.caption, weight: .medium).monospacedDigit())
                     .foregroundStyle(Color.textTertiary)
             }
+        }
+    }
+
+    /// Where the media had him when the combine opened, and where they have him
+    /// now — `nil` while the two are the same, or before the snapshot exists.
+    ///
+    /// The pair is `preCombineProjection` (stamped at combine ENTRY, beside
+    /// `preCombineGrade`, by `ScoutingEngine.runLeagueCombine`) against the
+    /// live `draftProjection`. Both ends are numbers the simulation actually
+    /// holds; nothing here is computed from a coefficient.
+    ///
+    /// It is a MOVE ON THE MEDIA BOARD SINCE THE COMBINE OPENED, which is what
+    /// the footnote calls it, and deliberately not "what the combine cost him":
+    /// the combine's own drift pass and the post-combine mock re-read both run
+    /// when the club leaves the phase, and every later mock moves the board
+    /// again. Attributing the whole of it to the drills would be a claim the
+    /// engine does not support.
+    private func projectionMove(for prospect: CollegeProspect) -> (from: Int, to: Int)? {
+        guard let from = prospect.preCombineProjection,
+              let to = prospect.draftProjection,
+              from != to
+        else { return nil }
+        return (from, to)
+    }
+
+    /// True once at least one man on the report has moved — the footnote is
+    /// drawn only then, so a report opened during the combine (when nothing has
+    /// drifted yet) does not explain an arrow it is not showing.
+    private var hasProjectionMoves: Bool {
+        mentions.contains { mention in
+            prospect(for: mention).flatMap { projectionMove(for: $0) } != nil
         }
     }
 

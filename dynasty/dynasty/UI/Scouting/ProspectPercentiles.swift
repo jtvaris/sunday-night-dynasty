@@ -97,4 +97,50 @@ struct PercentilePools {
         let pct = Int(round(Double(countWorse) / Double(n - 1) * 98.0)) + 1
         return max(1, min(99, pct))
     }
+
+    // MARK: - Composite athleticism (#3446)
+
+    /// One number for how a man tested, weighted for what his position is
+    /// actually asked to do.
+    ///
+    /// The six drill percentiles this pool already produces, combined on
+    /// `CombineAthleticismWeights` — the balance table that says a guard's
+    /// bench is 30 % of his athletic profile and his shuttle 15 %, where an
+    /// unweighted mean would have called them equal. Same 1–99 scale as a
+    /// single drill cell, and the same meaning: **his rank inside his own
+    /// position group in this class**, not an absolute score against history.
+    ///
+    /// Drills he did not run are dropped and the surviving weights are
+    /// renormalised over what is left, so a man who skipped the bench is scored
+    /// on the five he ran rather than on a zero he never posted. `nil` when he
+    /// ran none of them — a DNP has no athletic profile, and inventing a 50 for
+    /// him would rank him above every man who tested badly.
+    ///
+    /// The FOG is not applied here. The caller decides whether it is allowed to
+    /// make the claim at all, exactly as it does for the single drill
+    /// percentiles — see `ProspectFog.showsPercentile`.
+    func athleticism(for prospect: CollegeProspect) -> Int? {
+        guard !isEmpty else { return nil }
+        let position = prospect.position
+        let w = CombineAthleticismWeights.weights(for: position)
+
+        var weighted = 0.0
+        var totalWeight = 0.0
+
+        func add(_ value: Double?, _ drill: DrillKind, _ weight: Double) {
+            guard let value, weight > 0 else { return }
+            weighted += Double(percentile(value: value, drill: drill, position: position)) * weight
+            totalWeight += weight
+        }
+
+        add(prospect.fortyTime, .forty, w.forty)
+        add(prospect.benchPress.map { Double($0) }, .bench, w.bench)
+        add(prospect.verticalJump, .vertical, w.vertical)
+        add(prospect.broadJump.map { Double($0) }, .broad, w.broad)
+        add(prospect.coneDrill, .threeCone, w.threeCone)
+        add(prospect.shuttleTime, .shuttle, w.shuttle)
+
+        guard totalWeight > 0 else { return nil }
+        return max(1, min(99, Int(round(weighted / totalWeight))))
+    }
 }

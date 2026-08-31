@@ -22,8 +22,9 @@ import SwiftData
 //     carry `layoutPriority(1)` and are laid out before it.
 //
 // The widest column set (the drills) still fits a portrait iPad without a
-// sideways scroll: 40+44+132+8+40+56+46+38+96+380+16 = 896, plus 16 pt of list
-// insets, inside 1024.
+// sideways scroll: 40+44+132+8+40+56+46+38+96+432+16 = 948, plus 16 pt of list
+// insets, inside 1024. (The drill block is 432 since the ATH composite joined
+// it at 52 pt — see `CombineW.ath`.)
 private enum CombineW {
     static let mark: CGFloat = 40
     /// "Rank" AND its sort chevron. At 32 the label wrapped to "Ra" / "nk" with
@@ -41,6 +42,9 @@ private enum CombineW {
     static let college: CGFloat = 96
 
     // Physical block — the combine's own drills, the table's home mode.
+    /// The weighted composite (#3446). It LEADS the drill block, so it wears
+    /// the same width as a drill cell: two digits over a "Top 10%" phrase.
+    static let ath: CGFloat = 52
     static let forty: CGFloat = 54
     static let bench: CGFloat = 52
     static let vertical: CGFloat = 52
@@ -102,6 +106,16 @@ struct CombineResultsView<Header: View>: View {
 
     /// `false` when the scouting budget cannot cover `tripCost`.
     var canAffordTrip: Bool = true
+
+    /// Reopens the Combine Report (#3424).
+    ///
+    /// The report was raised exactly once, from inside `sendScoutsToCombine`,
+    /// and could never be seen again — which is also why it could not quote a
+    /// projection move: at the moment it was on screen the drift that produces
+    /// one had not run yet. A door back in is what makes the later read
+    /// possible. `nil` before the league has held the event, when there is no
+    /// report to open.
+    var onOpenReport: (() -> Void)? = nil
 
     /// How many scouts this club actually employs.
     ///
@@ -271,6 +285,20 @@ struct CombineResultsView<Header: View>: View {
         let boardReads: [UUID: Int] = sortColumn == .rank
             ? Dictionary(uniqueKeysWithValues: base.map { ($0.id, ProspectFog.rank($0)) })
             : [:]
+        // Same shape, same reason (#3446): the composite walks six percentile
+        // pools, so it is taken once per prospect here rather than twice per
+        // comparison inside the sort. Built through the same fidelity gate the
+        // ATH cell draws with, so the sort orders exactly what is on screen —
+        // a broadcast-only read has no cell and no sort key.
+        let athleticismScores: [UUID: Int] = sortColumn == .athleticism
+            ? base.reduce(into: [:]) { map, prospect in
+                let fidelity = ProspectFog.combineFidelity(for: prospect, scoutsAttended: scoutsAttended)
+                guard ProspectFog.showsPercentile(fidelity),
+                      let score = percentilePools.athleticism(for: prospect)
+                else { return }
+                map[prospect.id] = score
+            }
+            : [:]
         let sorted = base.sorted { a, b in
             switch sortColumn {
             case .rank:
@@ -312,6 +340,16 @@ struct CombineResultsView<Header: View>: View {
                 return aTier < bTier
             case .projection:
                 return compare(a.draftProjection ?? 999, b.draftProjection ?? 999)
+            case .athleticism:
+                // Higher is better, and a man with no composite (a DNP, or a
+                // broadcast-only read) sorts to the bottom in BOTH directions
+                // the way the drill columns treat a missing time — `nil` is
+                // "no reading", not "the worst reading".
+                return compareOptional(
+                    athleticismScores[a.id].map { Double($0) },
+                    athleticismScores[b.id].map { Double($0) },
+                    lowerIsBetter: false
+                )
             case .fortyYard:
                 return compareOptional(a.fortyTime, b.fortyTime, lowerIsBetter: true)
             case .bench:
@@ -403,7 +441,7 @@ struct CombineResultsView<Header: View>: View {
                 .listRowBackground(Color.clear)
                 .listRowSeparator(.hidden)
 
-                if insightsExpanded || onSendScouts != nil {
+                if insightsExpanded || onSendScouts != nil || onOpenReport != nil {
                     Section {
                         headerBar
                     }
@@ -532,6 +570,7 @@ struct CombineResultsView<Header: View>: View {
             // column that is no longer on screen, with no arrow and no way to
             // clear it — reset to rank instead of sorting by a ghost.
             let drillColumns: Set<CombineColumn> = [
+                .athleticism,
                 .fortyYard, .bench, .vertical, .broadJump, .threeCone, .shuttle, .positionDrill
             ]
             if newMode != .physical && drillColumns.contains(sortColumn) {
@@ -569,9 +608,45 @@ struct CombineResultsView<Header: View>: View {
             if let onSendScouts {
                 sendScoutsCTA(action: onSendScouts)
             }
+            if let onOpenReport {
+                reopenReportButton(action: onOpenReport)
+            }
             // Position filtering moved to the hub's shared chip bar so one tap
             // filters the board, the prospect list and this table together.
         }
+    }
+
+    /// The way back into the Combine Report (#3424).
+    ///
+    /// Deliberately drawn whether or not the hub's Insights block is expanded,
+    /// for the same reason `sendScoutsCTA` is: it is the ONLY route to that
+    /// sheet, and a control that vanishes because a *presentation* preference
+    /// is collapsed is the shape of every "the button was not there" report.
+    private func reopenReportButton(action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Image(systemName: "newspaper.fill")
+                    .font(.caption)
+                Text("Combine Report")
+                    .font(.caption.weight(.bold))
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: DSType.Size.micro, weight: .bold))
+            }
+            .foregroundStyle(Color.accentGold)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity)
+            .background(Color.backgroundSecondary, in: RoundedRectangle(cornerRadius: DSCornerRadius.inline))
+            .overlay(
+                RoundedRectangle(cornerRadius: DSCornerRadius.inline)
+                    .strokeBorder(Color.accentGold.opacity(0.35), lineWidth: 1)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Open the combine report")
+        .accessibilityHint("Who the week made and who it cost, and what it did to their projected round")
     }
 
     /// The count under the title.
@@ -920,6 +995,12 @@ struct CombineResultsView<Header: View>: View {
     /// table opens on — and it keeps the sortable headers it always had.
     private var physicalHeaders: some View {
         Group {
+            // The composite LEADS the six it is built from, the way the board's
+            // scout band leads every one of its blocks: the answer first, the
+            // components after it. Sorting on it is the whole point of #3446 —
+            // "who is the best athlete at my position in this class" used to be
+            // six sorts and a memory.
+            sortableHeader("ATH", column: .athleticism, width: CombineW.ath)
             sortableHeader("40yd", column: .fortyYard, width: CombineW.forty)
             sortableHeader("Bench", column: .bench, width: CombineW.bench)
             sortableHeader("Vert", column: .vertical, width: CombineW.vertical)
@@ -1267,6 +1348,8 @@ struct CombineResultsView<Header: View>: View {
         benchDash: String
     ) -> some View {
         Group {
+            athleticismCell(prospect: prospect, showsPercentile: showsPercentile, dash: dash)
+
             drillCell(value: ProspectFog.fortyText(prospect.fortyTime, fidelity: fidelity),
                       tier: prospect.fortyTime.map { fortyTierForPosition($0, prospect.position) }, width: CombineW.forty,
                       percentile: showsPercentile ? prospect.fortyTime.map { drillPercentile($0, drill: .forty, prospect.position) } : nil,
@@ -1299,6 +1382,51 @@ struct CombineResultsView<Header: View>: View {
 
             positionDrillCell(prospect: prospect, fidelity: fidelity, dash: dash)
         }
+    }
+
+    /// The weighted composite (#3446): the six drill percentiles combined on
+    /// `CombineAthleticismWeights`, so the number answers "how did he test, for
+    /// a man at his position" rather than "how fast did he run".
+    ///
+    /// Gated on `ProspectFog.showsPercentile` — the SAME gate the six cells
+    /// beside it already use, for the same reason. A composite is a function of
+    /// six percentiles, so a club that only watched it on television and has
+    /// rounded times cannot have one: two men at 4.46 and 4.54 both print
+    /// "~4.5", and a composite built on that would rank them identically while
+    /// looking like a precise number. Attending the combine is what buys it.
+    private func athleticismCell(
+        prospect: CollegeProspect,
+        showsPercentile: Bool,
+        dash: String
+    ) -> some View {
+        let score = showsPercentile ? percentilePools.athleticism(for: prospect) : nil
+        let tier = score.map { ProspectMeasurableTier.label(for: $0) }
+        // The 1 pt is matched to `drillCell`: this cell sits directly beside
+        // six of them and its number/phrase pair has to land on the same two
+        // baselines, or the whole drill block reads misaligned.
+        return VStack(spacing: 1) {  // ds-lint:allow(spacing) matched to drillCell
+            Text(score.map { "\($0)" } ?? dash)
+                .font(.caption.weight(.bold).monospacedDigit())
+                .foregroundStyle(tier?.color ?? Color.textTertiary)
+            if let tier {
+                Text(tier.short)
+                    .font(.system(size: DSType.Size.micro, weight: .semibold))
+                    .foregroundStyle(tier.color)
+            }
+        }
+        .frame(width: CombineW.ath)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(athleticismAccessibilityLabel(prospect: prospect, score: score))
+    }
+
+    /// The composite, spoken. The cell itself is a bare number over a clipped
+    /// phrase, so VoiceOver has to say what the number is OF.
+    private func athleticismAccessibilityLabel(prospect: CollegeProspect, score: Int?) -> String {
+        guard let score else {
+            return "Athleticism, no reading"
+        }
+        let phrase = ProspectMeasurableTier.label(for: score).text
+        return "Athleticism \(score) of 99 for a \(prospect.position.rawValue), \(phrase) of this class"
     }
 
     /// Position drill grade — a judgement rather than a stopwatch reading, so
@@ -1797,6 +1925,9 @@ private enum CombineMoverFilter: String, CaseIterable, Identifiable {
 private enum CombineColumn {
     case rank, name, position, college
     case grade, projection, production
+    /// The weighted composite of the six drills (#3446) — the only column in
+    /// the block that is not a single stopwatch reading.
+    case athleticism
     case fortyYard, bench, vertical, broadJump, threeCone, shuttle
     case positionDrill
 }
