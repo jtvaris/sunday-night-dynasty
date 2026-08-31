@@ -239,9 +239,14 @@ struct TeamBrowseCatalog {
             // rather than being read off a roster snapshot: the template
             // renames the nickname, not the franchise, and a 4-13 season does
             // not cost a club its history. A club the app has no row for takes
-            // the middle tier and the middle style — the same "state nothing
-            // rather than invent" fallback every other field in this function
-            // uses, and the sheet reads as unremarkable rather than as wrong.
+            // prestige 3, which is genuinely the middle of the 1-5 tier, and
+            // `.tactician`, which is NOT the middle of anything: `CoachingStyle`
+            // is five unordered cases and `.tactician` is simply the first one
+            // declared. It is a named default rather than a computed midpoint,
+            // and it is safe only because the pairing carries no mechanic — the
+            // sheet's Coaching Style card states in as many words that nothing
+            // is docked for a difference, so an unmatched club reads as
+            // unremarkable rather than as wrong.
             prestige: base?.prestige ?? 3,
             styleFit: base?.styleFit ?? .tactician,
             // The schemes, by contrast, are NOT authored here: the template

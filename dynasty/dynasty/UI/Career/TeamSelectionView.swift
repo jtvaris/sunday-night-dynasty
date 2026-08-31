@@ -332,10 +332,6 @@ struct TeamSelectionView: View {
             CompactTeamRow(
                 team: team,
                 preview: catalog.preview(for: team),
-                // The match is decided HERE and passed in as a Bool, so the row
-                // carries a mark it can only ever show for a club that really
-                // is run the way this user says he works.
-                declaredStyle: coachingStyle,
                 compareModeOn: compareModeOn,
                 isSelectedForCompare: selectedForCompare.contains(team.abbreviation)
             )
@@ -978,19 +974,18 @@ private struct CompactTeamRow: View {
     /// Scouting numbers for the league being browsed — static table for a
     /// generated league, template-derived for a fixed one.
     let preview: TeamPreview
-    /// The style the user declared on the identity page. The row marks the
-    /// clubs already run that way — the list is where 32 teams are compared,
-    /// and a match that only appeared inside the detail sheet would mean
-    /// opening thirty-two sheets to find it.
-    var declaredStyle: CoachingStyle? = nil
     var compareModeOn: Bool = false
     var isSelectedForCompare: Bool = false
 
-    /// Whether this club is run the way the user says he runs one.
-    private var matchesDeclaredStyle: Bool {
-        declaredStyle.map { $0 == preview.styleFit } ?? false
-    }
-
+    // NO STYLE MARK ON THIS ROW. `TeamPreview.styleFit` is stated on the detail
+    // sheet's Coaching Style card and nowhere else, because that is the shape
+    // the option chosen for it has: a field on `TeamPreview`, a matching rule
+    // against the style already declared on the identity page, and no new
+    // signal in this list. The row already carries logo, name, record,
+    // situation, city, QB, OVR, stars, CAP/STF and OWNER; a tenth is a
+    // column-layout call reserved to the owner, and a glyph in the name row is
+    // still a tenth signal. It was added here once and is removed again — if it
+    // is wanted on the row, it is asked for on the row.
     private var ownerPatienceColor: Color {
         switch preview.ownerPatience {
         case "Very Patient": return .success
@@ -1049,16 +1044,6 @@ private struct CompactTeamRow: View {
                         )
                         .lineLimit(1)
                         .fixedSize()
-                    // No tenth column: the mark rides in the space the name
-                    // row already has, and only on the clubs that match, so
-                    // most rows are unchanged. It claims nothing mechanical —
-                    // the detail sheet's Coaching Style card is explicit that
-                    // nothing is docked for a difference.
-                    if matchesDeclaredStyle, let declaredStyle {
-                        Image(systemName: declaredStyle.icon)
-                            .font(.system(size: DSType.Size.micro, weight: .semibold))
-                            .foregroundStyle(Color.success)
-                    }
                 }
                 HStack(spacing: 6) {
                     Text(team.city)
@@ -1162,7 +1147,7 @@ private struct CompactTeamRow: View {
                 )
         )
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(team.city) \(team.name), \(preview.lastSeasonRecord), \(preview.situation), roster \(preview.estimatedOVR) OVR, difficulty \(preview.difficulty) of 5, QB \(preview.startingQBName) \(preview.startingQBOverall) OVR, \(preview.ownerPatience) owner, \(preview.patienceSeasons) seasons\(matchesDeclaredStyle ? ", run on your coaching style" : "")\(preview.isLocked ? ", locked" : "")\(compareModeOn ? (isSelectedForCompare ? ", selected for compare" : ", not selected") : "")")
+        .accessibilityLabel("\(team.city) \(team.name), \(preview.lastSeasonRecord), \(preview.situation), roster \(preview.estimatedOVR) OVR, difficulty \(preview.difficulty) of 5, QB \(preview.startingQBName) \(preview.startingQBOverall) OVR, \(preview.ownerPatience) owner, \(preview.patienceSeasons) seasons\(preview.isLocked ? ", locked" : "")\(compareModeOn ? (isSelectedForCompare ? ", selected for compare" : ", not selected") : "")")
     }
 }
 
@@ -2204,9 +2189,16 @@ private struct TeamDetailSheet: View {
     /// claimed for a match — nothing in the engine reads the pairing, and the
     /// copy is careful to say the difference costs nothing rather than let the
     /// player read a hidden penalty into it. What the note quotes instead is
-    /// real: the style's own `+bonusValue bonusAttribute`, and the market read
-    /// `FranchiseIdentityDeclaration.declare` seeds from it the moment this
-    /// sheet is confirmed.
+    /// the market read `FranchiseIdentityDeclaration.declare` seeds from the
+    /// style the moment this sheet is confirmed — that one is real, it writes
+    /// `TradeValueEngine.FranchiseIdentityRegistry`, and `TradeReputationRegistry`
+    /// moves the other 31 front offices off it from the user's first trade.
+    ///
+    /// NOT the "+`bonusValue` `bonusAttribute`" badge. That number has no
+    /// computing function behind it: `CoachingStyle.bonusValue` is a flat 10 for
+    /// all five styles, nothing in Engine/ reads `Career.coachingStyle`, and no
+    /// coach attribute is ever adjusted by it. It ships on the staff screen as
+    /// inherited copy; the team picker does not repeat it.
     private var styleFitCard: some View {
         let matches = preview.styleFit == coachingStyle
         return VStack(spacing: DSSpacing.xs) {
@@ -2246,7 +2238,7 @@ private struct TeamDetailSheet: View {
                 .fixedSize(horizontal: false, vertical: true)
 
             DSDetailNote(
-                text: "Your style is worth +\(coachingStyle.bonusValue) \(coachingStyle.bonusAttribute) wherever you go, and it is the read the other 31 front offices price you against until your own trades change their minds.",
+                text: String(localized: "The style you declared is the read the other 31 front offices price you against, wherever you go, until your own trades change their minds."),
                 icon: coachingStyle.icon
             )
         }
@@ -2286,6 +2278,26 @@ private struct TeamDetailSheet: View {
     /// defence. Before that, nothing here could be said at all, which is why
     /// the card is guarded rather than defaulted: a source that states no
     /// scheme gets no card.
+    ///
+    /// WHAT THE NOTE MAY NOT PROMISE. This pair is a fact about the club as the
+    /// generator built it, and about the other 31 clubs for the whole career —
+    /// but NOT about the user's own staff. `finalizeCareer` strips the chosen
+    /// club's coaches outright (`coach.teamID = nil`, deliberately: the wizard
+    /// guides the hiring), and both paths onto this screen — the standard one
+    /// and the fantasy-draft detour — funnel through it. `RosterViewWrapper`
+    /// then finds no offensive coordinator, so its `offensiveScheme` stays nil
+    /// and `RosterView.installedScheme(for:)` returns nil on every offensive
+    /// row; and no defensive coordinator, so `defensiveScheme` holds its
+    /// `.base43` default and the starter counts grade under a 4-3 whatever this
+    /// card said. An earlier draft of the note claimed the roster screen's FIT
+    /// column "rates every player against these two systems" — for the one club
+    /// this sheet ever turns into a career, it does not. What survives the strip
+    /// is the roster itself: `initializePlayerFamiliarity` seeds every man's
+    /// day-one `schemeFamiliarity` off exactly these two on BOTH sources (the
+    /// template importer calls the same function after `makeStaff`), and
+    /// `generateRoster` is additionally built to this defence on the random
+    /// one. The note claims the half that holds either way, and says plainly
+    /// that the seats are empty from then on.
     @ViewBuilder
     private var installedSchemeCard: some View {
         if let offense = preview.offensiveScheme, let defense = preview.defensiveScheme {
@@ -2307,8 +2319,8 @@ private struct TeamDetailSheet: View {
 
                 DSDetailNote(
                     text: rosterPromisesHold
-                        ? String(localized: "The rooms in Roster Shape are graded under this club's own front — a 3-4 fields one nose tackle where a 4-3 fields two — and the FIT column on your roster screen rates every player against these two systems.")
-                        : String(localized: "The staff is not part of a fantasy draft, so this is still the system the club installs for whoever you draft."),
+                        ? String(localized: "The rooms in Roster Shape are graded under this club's own front — a 3-4 fields one nose tackle where a 4-3 fields two — and every man on the roster starts with his playbook knowledge seeded on these two systems. You take the job with the staff seats empty, so what your roster screen grades against from then on is the pair your own coordinators run.")
+                        : String(localized: "This is what the building ran on before you arrived. A fantasy draft redeals every roster in the league, and you take the job with the staff seats empty, so the systems your club installs are the ones the coordinators you hire bring with them."),
                     icon: "list.clipboard"
                 )
             }
