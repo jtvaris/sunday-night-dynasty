@@ -71,15 +71,65 @@ struct TeamSelectionView: View {
     /// the generated league and says so rather than dead-ending.
     @State private var templateLoadError: String? = nil
 
+    // MARK: - The random league, built at pick time
+
+    /// The random league this screen is browsing, rolled BEFORE the list is
+    /// drawn — and the very league the career starts from.
+    ///
+    /// This screen used to draw all 32 clubs from `LeagueTeamData`'s authored
+    /// table and then generate a league inside `startCareer`, after the player
+    /// had already committed. Every roster question the sheet wanted to answer
+    /// — the strongest and weakest room, the names worth knowing, what the cap
+    /// sheet actually looks like — had to be authored ahead of a roster that did
+    /// not exist yet, and the generator was then asked to make the promise come
+    /// true. The league now exists first, `TeamBrowseCatalog.generated(from:)`
+    /// reads it, and `startCareer` has no generator call left to make a second
+    /// one with.
+    @State private var prepared: PreparedLeague?
+
+    /// True only while `buildGeneratedLeague` is running. Separate from
+    /// `isLoading` (which now covers career creation and nothing else) because
+    /// the two say different things to the player.
+    @State private var isBuildingLeague = false
+
+    /// The un-persisted random league, and the career it belongs to.
+    ///
+    /// The `Career` is built here rather than in `startCareer` because every
+    /// field it needs — name, avatar, style, role, cap mode, game mode,
+    /// scenario, injury frequency — was collected on the identity page before
+    /// this screen opened. Only `teamID` waits for the tap. It has to exist this
+    /// early anyway: `FaceLibrary.beginNewCareer` binds the portrait registry to
+    /// a career, and it must be bound before `generate` hands out any faces.
+    private struct PreparedLeague {
+        let career: Career
+        let result: LeagueGenerator.GeneratedLeague
+        let seasonHistory: [PlayerSeasonHistory]
+    }
+
     /// Un-persisted league snapshot passed into the fantasy draft cover.
     private struct PendingFantasyDraft: Identifiable {
         let id = UUID()
         let career: Career
         let result: LeagueGenerator.GeneratedLeague
         let chosenTeamID: UUID
-        /// Career-history rows from a template import (empty for random leagues),
-        /// held until the draft finishes and the graph is inserted.
+        /// Career-history rows from a template import, or the random league's
+        /// synthesized backstory, held until the draft finishes and the graph is
+        /// inserted.
         let seasonHistory: [PlayerSeasonHistory]
+        /// Who was on which roster before the pool was emptied, and what each
+        /// club's cap ledger read.
+        ///
+        /// Starting the draft strips all 32 rosters in place. That used to be
+        /// harmless because a cancelled draft dropped a league nothing else
+        /// held — `startCareer` rolled a fresh one on the next tap. The league
+        /// is now rolled once, at the front of the screen, and the picker is
+        /// still showing it: without this the player would cancel back to a list
+        /// of clubs whose cards describe rosters the league no longer has, and
+        /// then start a career with 32 empty teams. `restoreRosters` puts it
+        /// back exactly as it was rather than re-rolling it, because re-rolling
+        /// is the bug this screen exists to remove.
+        let rostersBeforePool: [UUID: [Player]]
+        let capUsageBeforePool: [UUID: Int]
     }
 
     /// iPad always reports .regular for both size classes, so orientation has to
@@ -203,7 +253,10 @@ struct TeamSelectionView: View {
                 }
             }
             // Nothing is selectable until the chosen league is ready to browse.
-            .disabled(isLoading || isLoadingTemplate)
+            // On the random path that now means "until the league has been
+            // rolled", not "until a template has decoded" — a club cannot be
+            // picked out of a list whose numbers are not yet the league's.
+            .disabled(isLoading || isLoadingTemplate || isBuildingLeague)
 
             // Floating "Compare (n)" button when compare mode is active
             if compareModeOn && selectedForCompare.count >= 2 {
@@ -226,16 +279,19 @@ struct TeamSelectionView: View {
                 }
             }
 
-            if isLoading || isLoadingTemplate {
+            if isLoading || isLoadingTemplate || isBuildingLeague {
                 ZStack {
                     Color.backgroundPrimary.opacity(0.85).ignoresSafeArea()
                     VStack(spacing: 16) {
                         ProgressView()
                             .controlSize(.large)
                             .tint(Color.accentBlue)
-                        Text(isLoadingTemplate
-                             ? "Loading \(leagueSource.displayName) League..."
-                             : (catalog.source.isTemplate ? "Building League..." : "Generating League..."))
+                        // Each label names the step that is actually running.
+                        // "Generating League" has moved to the front of the
+                        // screen because that is where the generating now
+                        // happens; what is left after the tap is the template
+                        // import (fixed leagues) or the insert into the store.
+                        Text(loadingLabel)
                             .font(.headline)
                             .foregroundStyle(Color.textPrimary)
                     }
@@ -292,7 +348,10 @@ struct TeamSelectionView: View {
                     onComplete: { rosters in
                         completeFantasyDraft(pending: pending, rosters: rosters)
                     },
-                    onCancel: { activeCover = nil }
+                    onCancel: {
+                        restoreRosters(pending)
+                        activeCover = nil
+                    }
                 )
             }
         }
@@ -673,44 +732,136 @@ struct TeamSelectionView: View {
 
     // MARK: - League Source (phase 3)
 
-    /// Decodes the chosen fixed template, once, before the list is browsable.
-    ///
-    /// The decode (1.5 MB publish / 2.6 MB dev) runs off the main actor so the
-    /// picker never stalls mid-animation. A failure is not fatal: the screen
-    /// falls back to the generated league, says so in the banner, and career
-    /// creation follows `catalog.source` — never the requested source — so what
-    /// gets persisted is always what was actually built.
-    private func prepareLeagueSource() async {
-        guard let profile = leagueSource.templateProfile else {
-            catalog = .generated
-            return
-        }
-        // Already decoded (the view can re-appear after the detail cover).
-        guard template == nil else { return }
-
-        isLoadingTemplate = true
-        let outcome: Result<LeagueTemplate, Error> = await Task.detached(priority: .userInitiated) {
-            Result { try LeagueTemplateLoader.load(profile) }
-        }.value
-        isLoadingTemplate = false
-
-        switch outcome {
-        case .success(let loaded):
-            template = loaded
-            catalog = .template(loaded, source: leagueSource)
-            templateLoadError = nil
-        case .failure(let error):
-            template = nil
-            catalog = .generated
-            templateLoadError = error.localizedDescription
-        }
+    /// What the blocking overlay is waiting on, in the player's words.
+    private var loadingLabel: String {
+        if isLoadingTemplate { return "Loading \(leagueSource.displayName) League..." }
+        if isBuildingLeague  { return "Generating League..." }
+        // Whatever is left after the tap: importing a fixed template, or
+        // writing the already-built league into the save.
+        return catalog.source.isTemplate ? "Building League..." : "Starting Career..."
     }
 
-    // MARK: - Start Career
+    /// Gets the league this screen browses ready — decode a fixed template, or
+    /// roll the random one — before a single club is selectable.
+    ///
+    /// The template decode (1.5 MB publish / 2.6 MB dev) runs off the main actor
+    /// so the picker never stalls mid-animation. A failure is not fatal: the
+    /// screen falls back to the generated league, says so in the banner, and
+    /// career creation follows `catalog.source` — never the requested source —
+    /// so what gets persisted is always what was actually built.
+    private func prepareLeagueSource() async {
+        // Once, and once only. Rebuilding is the whole defect: the player would
+        // be reading one league's rosters and starting another's.
+        guard prepared == nil else { return }
 
-    private func startCareer(with teamDef: LeagueTeamDefinition) {
-        isLoading = true
+        if let profile = leagueSource.templateProfile {
+            // Already decoded (the view can re-appear after the detail cover).
+            guard template == nil else { return }
 
+            isLoadingTemplate = true
+            let outcome: Result<LeagueTemplate, Error> = await Task.detached(priority: .userInitiated) {
+                Result { try LeagueTemplateLoader.load(profile) }
+            }.value
+            isLoadingTemplate = false
+
+            switch outcome {
+            case .success(let loaded):
+                template = loaded
+                catalog = .template(loaded, source: leagueSource)
+                templateLoadError = nil
+                return
+            case .failure(let error):
+                template = nil
+                templateLoadError = error.localizedDescription
+                // and fall through to the random league, which the banner names
+            }
+        }
+
+        await buildGeneratedLeague()
+    }
+
+    /// Rolls the random league **before the list is drawn**.
+    ///
+    /// This is the refactor. Everything the sheet says about a club's roster now
+    /// has a roster behind it (`TeamBrowseCatalog.generated(from:)` lists which
+    /// figure comes from which function), and the graph built here is the graph
+    /// `finalizeCareer` inserts — `startCareer` cannot roll a second one because
+    /// it no longer calls the generator on this path at all.
+    ///
+    /// ## Why it runs on the main actor
+    ///
+    /// The target builds with `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor`, so
+    /// `LeagueGenerator`, every `@Model` it allocates and `FaceLibrary` are all
+    /// main-actor isolated. There is no detached variant to reach for the way
+    /// there is for the template decode above, whose `Task.detached` only has to
+    /// carry a `Codable` struct across the boundary. Taking generation off the
+    /// actor means marking the generator and the whole model layer it touches
+    /// `nonisolated`, which is a change across a dozen files this work does not
+    /// own — see the report's `needsDecision`.
+    ///
+    /// So it blocks, and it says so while it does. What this DOES change is
+    /// where the block falls: the generation wait moves to the front of the
+    /// screen, behind a spinner the player is already expecting, and what is
+    /// left after the tap is the insert into the store, which was always there.
+    private func buildGeneratedLeague() async {
+        guard prepared == nil else { return }
+        isBuildingLeague = true
+        // Hand the actor back once before holding it for the duration, so
+        // SwiftUI gets to process the `isBuildingLeague` change instead of
+        // coalescing it with the work below. A yield rather than a timed guess;
+        // it is the strongest thing available without moving the generator off
+        // the actor, and it is not a guarantee that the frame has drawn.
+        await Task.yield()
+
+        let career = makeCareer()
+        // Bind the portrait library to THIS career with an empty registry
+        // before anybody is created, so every player and coach below is reserved
+        // against it and nothing leaks in from a previously played save. It
+        // moved here with the generation it has to precede.
+        FaceLibrary.shared.beginNewCareer(career)
+
+        // Measured, not estimated. `PerfLog` prints `PERF|<metric>|<ms>` in
+        // DEBUG and compiles away entirely in Release, so the cost of the wait
+        // this refactor moves to the front of the screen is a number anyone can
+        // read off the console (`xcrun simctl launch --console-pty`) rather than
+        // a claim in a comment. Two metrics, because the two halves are
+        // independently large: 32 clubs × the 53-man `rosterBlueprint` and the
+        // 16 seats in `coachingStaffRoles` for the roll, and up to
+        // `backstorySeasonCap` synthesized seasons per player for the backstory.
+        let result = PerfLog.time("career_new_generateLeague") {
+            LeagueGenerator.generate(startYear: career.currentSeason)
+        }
+        // The generator rolls rosters but no past, so the career table (and
+        // every engine that reads history) would open on a league where nobody
+        // had played a game. Synthesize a backstory. It is built here rather
+        // than at the tap for the same reason as the league: one wait, and
+        // nothing at all is rolled after the player has chosen.
+        let seasonHistory = PerfLog.time("career_new_backstory") {
+            LeagueGenerator.syntheticCareerHistory(
+                players: result.players, startYear: career.currentSeason
+            )
+        }
+
+        career.leagueSource = .generated
+        career.leagueID = result.league.id
+
+        catalog = PerfLog.time("career_new_catalog") {
+            TeamBrowseCatalog.generated(from: result)
+        }
+        prepared = PreparedLeague(
+            career: career, result: result, seasonHistory: seasonHistory
+        )
+        isBuildingLeague = false
+    }
+
+    /// The career this screen is creating, before it knows which club.
+    ///
+    /// Every field here was collected on the identity page; only `teamID` and
+    /// `leagueID` wait. Factored out because both league sources need one and
+    /// they build it at different moments — the random league at `.task` time,
+    /// so the generator has a career to reserve faces against, and the template
+    /// import at the tap.
+    private func makeCareer() -> Career {
         let career = Career(
             playerName: playerName,
             avatarID: avatarID,
@@ -722,43 +873,82 @@ struct TeamSelectionView: View {
         career.gameMode = gameMode
         career.scenario = scenario
         career.injuryFrequency = injuryFrequency
+        return career
+    }
 
-        // Phase 4 faces: bind the library to the new career with an EMPTY
-        // registry BEFORE the league is built, so every player and coach
-        // created below is reserved against this career and nothing leaks in
-        // from a previously played one.
-        FaceLibrary.shared.beginNewCareer(career)
+    // MARK: - Start Career
 
-        // Fixed template vs. random roll. Either way the whole graph is built
-        // here and inserted here only: a template career is imported exactly
-        // once and then lives in the save file like any other, so nothing is
-        // regenerated on later launches. `leagueSource` is written inside the
-        // branch that actually ran, so the persisted provenance can never claim
-        // a template the screen failed to load.
+    private func startCareer(with teamDef: LeagueTeamDefinition) {
+        isLoading = true
+
+        // Fixed template vs. random roll.
+        //
+        // The random branch does not build anything: it takes the league the
+        // picker has been browsing since `.task` ran. That is the point of the
+        // whole refactor — there is no `LeagueGenerator.generate` call on this
+        // path any more, so there is nothing here that could hand the player a
+        // different league from the one whose cards he just read.
+        //
+        // The template branch still imports at the tap, and provably does not
+        // need hoisting: `LeagueTemplateImporter` is seeded from the decoded
+        // template's own `globalSeed`, and `TeamBrowseCatalog.template` derives
+        // the cards from that same decoded value with the same helpers, so the
+        // import is a function of the file the picker was already reading.
+        // `leagueSource` is written inside the branch that actually ran, so the
+        // persisted provenance can never claim a template the screen failed to
+        // load.
+        let career: Career
         let result: LeagueGenerator.GeneratedLeague
         let seasonHistory: [PlayerSeasonHistory]
         if catalog.source.isTemplate, let template {
+            career = makeCareer()
+            // Bind the portrait library to the new career with an EMPTY registry
+            // BEFORE the league is built, so every player and coach created
+            // below is reserved against this career and nothing leaks in from a
+            // previously played one. (The random path did this in
+            // `buildGeneratedLeague`, where its league is built.)
+            FaceLibrary.shared.beginNewCareer(career)
             let imported = LeagueGenerator.generateFromTemplate(
                 template, startYear: career.currentSeason
             )
             result = imported.generated
             seasonHistory = imported.seasonHistory
             career.leagueSource = catalog.source
+            career.leagueID = result.league.id
+        } else if let prepared {
+            career = prepared.career
+            result = prepared.result
+            seasonHistory = prepared.seasonHistory
         } else {
-            result = LeagueGenerator.generate(startYear: career.currentSeason)
-            // The generator rolls rosters but no past, so the career table (and
-            // every engine that reads history) would open on a league where
-            // nobody had played a game. Synthesize a backstory instead.
-            seasonHistory = LeagueGenerator.syntheticCareerHistory(
-                players: result.players, startYear: career.currentSeason
-            )
-            career.leagueSource = .generated
+            // Unreachable: the list is disabled until `prepared` is set. Bail
+            // rather than quietly rolling a league nobody has seen.
+            isLoading = false
+            return
         }
 
         // Find the team matching the selected definition.
         let chosenTeam = result.teams.first { $0.abbreviation == teamDef.abbreviation }
 
-        career.leagueID = result.league.id
+        // The tripwire. `leagueID` was written when the league was BUILT — at
+        // `.task` time on the random path — and `result` is the graph about to
+        // be inserted. If a future edit reintroduces a post-selection
+        // `LeagueGenerator.generate`, these two stop matching here.
+        #if DEBUG
+        assert(
+            career.leagueID == result.league.id,
+            "career-start is persisting a different league from the one the picker browsed"
+        )
+        // A scenario re-parametrizes the CHOSEN club, so it is the one thing on
+        // this screen that cannot be applied before the tap. It also cannot
+        // double-apply across a cancelled Fantasy Draft — the only way back into
+        // this function — because `CareerSetup.scenario` is nil for
+        // `.fantasyDraft`, making the two mutually exclusive.
+        assert(
+            scenario == nil || gameMode != .fantasyDraft,
+            "a scenario and Fantasy Draft cannot both be set (CareerSetup.scenario is nil for .fantasyDraft)"
+        )
+        #endif
+
         career.teamID = chosenTeam?.id
 
         // R40 — scenario starts re-parametrize the generated league (roster
@@ -777,6 +967,15 @@ struct TeamSelectionView: View {
         // R40 — Fantasy Draft: pool every player and run the draft screen
         // before anything is persisted. Standard mode finalizes immediately.
         if gameMode == .fantasyDraft, let chosenTeam {
+            // Photograph the league before emptying it — the picker is still
+            // showing this exact graph, and a cancelled draft has to give it
+            // back rather than get a re-roll. See `PendingFantasyDraft`.
+            var rostersBeforePool: [UUID: [Player]] = [:]
+            var capUsageBeforePool: [UUID: Int] = [:]
+            for team in result.teams {
+                rostersBeforePool[team.id] = team.players
+                capUsageBeforePool[team.id] = team.currentCapUsage
+            }
             for player in result.players { player.teamID = nil }
             for team in result.teams {
                 team.players = []
@@ -787,7 +986,9 @@ struct TeamSelectionView: View {
                 career: career,
                 result: result,
                 chosenTeamID: chosenTeam.id,
-                seasonHistory: seasonHistory
+                seasonHistory: seasonHistory,
+                rostersBeforePool: rostersBeforePool,
+                capUsageBeforePool: capUsageBeforePool
             )
             // The detail cover is on its way out; the slot is handed over in
             // `handleCoverDismiss`, which fires once it has actually gone. No
@@ -803,6 +1004,21 @@ struct TeamSelectionView: View {
             chosenTeamID: chosenTeam?.id,
             seasonHistory: seasonHistory
         )
+    }
+
+    /// Puts the league back exactly as the picker showed it, after a cancelled
+    /// Fantasy Draft.
+    ///
+    /// Not a re-roll and deliberately not one: the same `Player` and `Team`
+    /// objects go back onto the same rosters with the same cap ledger, so the
+    /// cards the player returns to describe the league he can still start.
+    private func restoreRosters(_ pending: PendingFantasyDraft) {
+        for team in pending.result.teams {
+            let roster = pending.rostersBeforePool[team.id] ?? []
+            for player in roster { player.teamID = team.id }
+            team.players = roster
+            team.currentCapUsage = pending.capUsageBeforePool[team.id] ?? 0
+        }
     }
 
     /// R40 — Fantasy Draft completion: assign rosters, regenerate OVR-based
@@ -1797,10 +2013,18 @@ private struct TeamDetailSheet: View {
     /// quarterback, the key players and the strongest/weakest room — still
     /// describe the league the player is about to start.
     ///
-    /// They do in Standard, which is what they were built for:
-    /// `LeagueGenerator.generateRoster` opens by naming those exact three
-    /// things as "promises about a roster that does not exist yet", and keeps
-    /// all three. They do not in Fantasy Draft. Confirming this sheet in that
+    /// They do in Standard, and they no longer do it by keeping a promise. The
+    /// three cards used to state authored values that `LeagueGenerator`
+    /// `.generateRoster` then worked to make true — pinning the named men to
+    /// their targets and running a capped repair loop until the strongest and
+    /// weakest labels were earned. The random league is now built before this
+    /// sheet is drawn, so `TeamBrowseCatalog.generated(from:)` reads all three
+    /// straight off the finished roster: the quarterback is the man Auto-Set
+    /// will start, the names are the three best players on the books, and the
+    /// rooms are graded with the same call the roster screen grades with. There
+    /// is nothing left to keep.
+    ///
+    /// They still do not hold in Fantasy Draft. Confirming this sheet in that
     /// mode hands every player in the league to `FantasyDraftEngine`, which
     /// pools all ~1 700 of them and re-drafts all 32 rosters from scratch — so
     /// the named quarterback will very likely be somebody else's, and the room
