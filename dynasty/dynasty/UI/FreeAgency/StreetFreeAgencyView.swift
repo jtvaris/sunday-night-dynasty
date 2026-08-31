@@ -39,10 +39,14 @@ struct StreetFreeAgencyView: View {
 
         var id: String { rawValue }
 
+        /// Not "Everyone": this picker widens the board from the short-handed
+        /// rooms to the whole of `streetPool`, which is everyone ON THE WIRE —
+        /// still `overall < streetCeilingOverall`, still not the whole unsigned
+        /// population.
         var label: String {
             switch self {
             case .needs:    return "Our Needs"
-            case .everyone: return "Everyone"
+            case .everyone: return "Whole Wire"
             }
         }
     }
@@ -102,6 +106,16 @@ struct StreetFreeAgencyView: View {
 
     private var dealSalary: Int {
         ourTeam.map { InSeasonMarketEngine.streetSalary(for: $0) } ?? 0
+    }
+
+    /// Whether this is the OPEN offseason half of the door — read off the
+    /// ceiling `userRosterCeiling` hands back rather than by retyping the phase
+    /// list, so the screen cannot disagree with the engine about which months
+    /// are which. `isOpenToUser` keeps the note off the one phase where the
+    /// answer is the market screen instead.
+    private var isOffseasonDoor: Bool {
+        InSeasonMarketEngine.isOpenToUser(phase: career.currentPhase)
+            && rosterCeiling == TradeValueEngine.offseasonRosterCeiling
     }
 
     /// Why the club cannot sign right now — computed BEFORE the user presses
@@ -249,16 +263,44 @@ struct StreetFreeAgencyView: View {
             // The ceiling is the whole character of this market and it is easy
             // to read an empty-looking board as a bug instead. `streetCeilingOverall`
             // is the engine's own constant, quoted rather than retyped.
-            Text("Everyone still unsigned is under \(InSeasonMarketEngine.streetCeilingOverall) overall — camp cuts, washouts and men coming back from a year out. A starter is not available off the street. Every deal here is one year at the veteran minimum.")
+            //
+            // The sentence describes the BOARD, not the unsigned population:
+            // `streetPool` applies `overall < streetCeilingOverall` as a filter
+            // and measures nothing about who is unsigned. `PracticeSquadEngine`
+            // (:141) records 176-207 unsigned men at a mean OVR of 74.1 standing
+            // on the street in August, so a real share of them sit at or above
+            // the ceiling — the board withholds those, and says so rather than
+            // claiming they do not exist.
+            Text("This wire lists free agents under \(InSeasonMarketEngine.streetCeilingOverall) overall — camp cuts, washouts and men coming back from a year out. Anyone still unsigned above that is not on this board. Every deal here is one year at the veteran minimum.")
                 .font(.caption)
                 .foregroundStyle(Color.textSecondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
+
+            if isOffseasonDoor {
+                offseasonCapNote
+            }
 
             if !needs.isEmpty {
                 needsStrip
             }
         }
         .padding(.bottom, DSSpacing.xxs)
+    }
+
+    /// The one way a summer signing made here differs from every other body
+    /// that walks into a camp roster: `CampRosterEngine.invite` is deliberately
+    /// cap-exempt ("NO `team.currentCapUsage += …`. That is the whole
+    /// mechanism."), while this door signs a real one-year deal through
+    /// `ContractEngine.signPlayerSimple`, which debits `annualSalary` the moment
+    /// it lands. Sandbox charges nothing at all, so the line stays off there.
+    @ViewBuilder
+    private var offseasonCapNote: some View {
+        if career.capMode != .sandbox {
+            Text("Out of season this is still a real contract, not a camp invite: a camp body is cap-exempt, and \(DraftRecapView.formatCap(dealSalary)) goes on the cap the moment you sign here.")
+                .font(.caption)
+                .foregroundStyle(Color.warning)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
     }
 
     /// The short-handed rooms, exactly as `shorthandedPositions` returns them —
@@ -307,9 +349,9 @@ struct StreetFreeAgencyView: View {
             return "Nobody is on the wire. It fills again as clubs release players and each league year's free agents go unsigned."
         }
         if needs.isEmpty {
-            return "No position room is below strength, so there is nobody the wire has to fix. Switch to Everyone to look anyway."
+            return "No position room is below strength, so there is nobody the wire has to fix. Switch to Whole Wire to look anyway."
         }
-        return "Nobody on the wire plays a position you are short at. Switch to Everyone to see the rest of the pool."
+        return "Nobody on the wire plays a position you are short at. Switch to Whole Wire to see the rest of it."
     }
 
     private func row(_ player: Player) -> some View {
