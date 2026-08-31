@@ -182,9 +182,25 @@ enum LeagueGenerator {
             // and two inside linebackers where a 4-3 fields two tackles and
             // one. So the same value that makes the strongest/weakest claim
             // true down in `generateRoster` is the one the DC is then hired
-            // with, and the two cannot disagree. Drawn from the same uniform
-            // `allCases` pick `generateCoach` would have used.
-            let defensiveScheme = DefensiveScheme.allCases.randomElement()!
+            // with, and the two cannot disagree.
+            //
+            // INSTALLED, NOT DRAWN. Both halves now come from the club's own
+            // `TeamPreview` row instead of `allCases.randomElement()`. The
+            // team picker states the two systems on its detail sheet, and a
+            // pre-generation card cannot state a value that is rolled after
+            // the player has already committed — the same reason the starting
+            // quarterback, the stars and the strongest/weakest rooms are
+            // authored there and made true here. The authored table holds the
+            // marginal distribution the uniform draw had (4 clubs per
+            // offensive scheme; 4-5 per defensive one), so the league the
+            // balance work measured is the league this still builds; only
+            // WHICH club runs which system is now fixed rather than rolled.
+            // `randomElement` stays as the fallback for a club with no row.
+            let preview = LeagueTeamData.previews[teamDef.abbreviation]
+            let defensiveScheme = preview?.defensiveScheme
+                ?? DefensiveScheme.allCases.randomElement()!
+            let offensiveScheme = preview?.offensiveScheme
+                ?? OffensiveScheme.allCases.randomElement()!
 
             // Create 53-man roster with realistic salary tiers.
             // Pass the team abbreviation so the starting QB matches the TeamPreview data.
@@ -203,14 +219,28 @@ enum LeagueGenerator {
             // Create coaching staff (12 coaches)
             var teamCoaches: [Coach] = []
             for role in coachingStaffRoles {
-                // Only the DC is pinned: he is the one the roster screen reads
+                // The three seats that ARE the club's install get pinned to it.
+                //
+                // The DC has always been: he is the one the roster screen reads
                 // its starter counts from (`RosterEvaluationView` line 3365).
-                // The head coach and his assistant keep their own independent
-                // draws, exactly as before.
+                // The OC joins him because he is where the offensive install is
+                // read from — `RosterViewWrapper` and `FAWeeklyView` both take
+                // the club's offensive scheme off the offensive coordinator,
+                // and `initializePlayerFamiliarity` below seeds every offensive
+                // player's day-one playbook knowledge from `oc?.offensiveScheme`.
+                // The HEAD COACH joins them because `HireCoachView` grades a
+                // candidate against the HC's scheme FIRST, falling back to the
+                // coordinator's — so an unpinned head coach could contradict
+                // both the roster his club was built for and the card the
+                // player picked it from. The assistant HC keeps his own draws:
+                // nothing reads him as the install.
+                let installs = (role == .headCoach
+                                || role == .offensiveCoordinator
+                                || role == .defensiveCoordinator)
                 let coach = generateCoach(
                     role: role,
                     teamID: team.id,
-                    defensiveSchemeOverride: role == .defensiveCoordinator ? defensiveScheme : nil
+                    schemeOverride: installs ? (offensiveScheme, defensiveScheme) : nil
                 )
                 allCoaches.append(coach)
                 teamCoaches.append(coach)
@@ -1688,20 +1718,22 @@ enum LeagueGenerator {
         return values
     }
 
-    /// - Parameter defensiveSchemeOverride: the defence this coach must run.
-    ///   `generate` pins the defensive coordinator's, because the roster was
-    ///   built and verified against that scheme's starter counts and the roster
-    ///   screen will grade it back under the DC's. `nil` keeps the free draw.
+    /// - Parameter schemeOverride: the systems this coach must run. `generate`
+    ///   pins the head coach's and both coordinators' to the club's authored
+    ///   install: the roster was built and verified against the defence's
+    ///   starter counts, the roster screen grades it back under the DC's, and
+    ///   the team picker states both on the card the player chose the club
+    ///   from. `nil` keeps the free draw for the seats nothing reads.
     private static func generateCoach(
         role: CoachRole,
         teamID: UUID,
-        defensiveSchemeOverride: DefensiveScheme? = nil
+        schemeOverride: (offensive: OffensiveScheme?, defensive: DefensiveScheme?)? = nil
     ) -> Coach {
         var rng = SystemRandomNumberGenerator()
         return generateCoach(
             role: role,
             teamID: teamID,
-            schemeOverride: defensiveSchemeOverride.map { (offensive: nil, defensive: $0) },
+            schemeOverride: schemeOverride,
             using: &rng
         )
     }

@@ -19,7 +19,8 @@ import Foundation
 /// | record, roster OVR, starting QB, draft picks | the template |
 /// | cap space | `LeagueTemplateImporter.capTarget` — the same number the import will produce |
 /// | difficulty, situation | derived from the template's roster + record (see below) |
-/// | owner patience, market copy, coaching budget, lock | `LeagueTeamData` — franchise/market facts a roster snapshot does not change |
+/// | installed offensive/defensive scheme | the template's `staff.offScheme`/`defScheme` — the same two values `LeagueTemplateImporter.makeStaff` hires the HC/OC/DC under |
+/// | owner patience, market copy, coaching budget, lock, prestige, playstyle | `LeagueTeamData` — franchise/market facts a roster snapshot does not change |
 struct TeamBrowseCatalog {
 
     /// Which league source this catalog describes. Career creation reads it
@@ -94,7 +95,15 @@ struct TeamBrowseCatalog {
                 // see `LeagueGenerator.generateRoster`.
                 stars: preview.stars,
                 strongestGroup: preview.strongestGroup,
-                weakestGroup: preview.weakestGroup
+                weakestGroup: preview.weakestGroup,
+                // Franchise facts, and the scheme pair the generator now
+                // installs rather than draws — `LeagueGenerator.generate`
+                // reads these very fields to hire the staff and build the
+                // defence, so the card and the league cannot disagree.
+                prestige: preview.prestige,
+                styleFit: preview.styleFit,
+                offensiveScheme: preview.offensiveScheme,
+                defensiveScheme: preview.defensiveScheme
             )
         }
         return TeamBrowseCatalog(
@@ -224,7 +233,24 @@ struct TeamBrowseCatalog {
             // written, so the sheet reads it instead of guessing at it.
             stars: stars(team, excluding: qb),
             strongestGroup: rooms.max(by: { $0.grade < $1.grade })?.label ?? "",
-            weakestGroup: rooms.min(by: { $0.grade < $1.grade })?.label ?? ""
+            weakestGroup: rooms.min(by: { $0.grade < $1.grade })?.label ?? "",
+            // Prestige and the club's own playstyle are FRANCHISE facts, so
+            // they follow owner patience and market copy onto the static row
+            // rather than being read off a roster snapshot: the template
+            // renames the nickname, not the franchise, and a 4-13 season does
+            // not cost a club its history. A club the app has no row for takes
+            // the middle tier and the middle style — the same "state nothing
+            // rather than invent" fallback every other field in this function
+            // uses, and the sheet reads as unremarkable rather than as wrong.
+            prestige: base?.prestige ?? 3,
+            styleFit: base?.styleFit ?? .tactician,
+            // The schemes, by contrast, are NOT authored here: the template
+            // states what each club really installs and `makeStaff` hires the
+            // HC/OC/DC under exactly these two values, so the picker quotes
+            // the file rather than the static table. `nil` when a template was
+            // baked without the staff keys, and the sheet omits the card.
+            offensiveScheme: team.staff.offScheme.flatMap(OffensiveScheme.init(rawValue:)),
+            defensiveScheme: team.staff.defScheme.flatMap(DefensiveScheme.init(rawValue:))
         )
     }
 

@@ -265,6 +265,7 @@ struct TeamSelectionView: View {
                     TeamDetailSheet(
                         team: team,
                         catalog: catalog,
+                        coachingStyle: coachingStyle,
                         setupSummary: setupSummary,
                         selectTitle: gameMode == .fantasyDraft ? "START FANTASY DRAFT" : "SELECT THIS TEAM",
                         gameMode: gameMode
@@ -331,6 +332,10 @@ struct TeamSelectionView: View {
             CompactTeamRow(
                 team: team,
                 preview: catalog.preview(for: team),
+                // The match is decided HERE and passed in as a Bool, so the row
+                // carries a mark it can only ever show for a club that really
+                // is run the way this user says he works.
+                declaredStyle: coachingStyle,
                 compareModeOn: compareModeOn,
                 isSelectedForCompare: selectedForCompare.contains(team.abbreviation)
             )
@@ -973,8 +978,18 @@ private struct CompactTeamRow: View {
     /// Scouting numbers for the league being browsed — static table for a
     /// generated league, template-derived for a fixed one.
     let preview: TeamPreview
+    /// The style the user declared on the identity page. The row marks the
+    /// clubs already run that way — the list is where 32 teams are compared,
+    /// and a match that only appeared inside the detail sheet would mean
+    /// opening thirty-two sheets to find it.
+    var declaredStyle: CoachingStyle? = nil
     var compareModeOn: Bool = false
     var isSelectedForCompare: Bool = false
+
+    /// Whether this club is run the way the user says he runs one.
+    private var matchesDeclaredStyle: Bool {
+        declaredStyle.map { $0 == preview.styleFit } ?? false
+    }
 
     private var ownerPatienceColor: Color {
         switch preview.ownerPatience {
@@ -1034,6 +1049,16 @@ private struct CompactTeamRow: View {
                         )
                         .lineLimit(1)
                         .fixedSize()
+                    // No tenth column: the mark rides in the space the name
+                    // row already has, and only on the clubs that match, so
+                    // most rows are unchanged. It claims nothing mechanical —
+                    // the detail sheet's Coaching Style card is explicit that
+                    // nothing is docked for a difference.
+                    if matchesDeclaredStyle, let declaredStyle {
+                        Image(systemName: declaredStyle.icon)
+                            .font(.system(size: DSType.Size.micro, weight: .semibold))
+                            .foregroundStyle(Color.success)
+                    }
                 }
                 HStack(spacing: 6) {
                     Text(team.city)
@@ -1137,7 +1162,7 @@ private struct CompactTeamRow: View {
                 )
         )
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(team.city) \(team.name), \(preview.lastSeasonRecord), \(preview.situation), roster \(preview.estimatedOVR) OVR, difficulty \(preview.difficulty) of 5, QB \(preview.startingQBName) \(preview.startingQBOverall) OVR, \(preview.ownerPatience) owner, \(preview.patienceSeasons) seasons\(preview.isLocked ? ", locked" : "")\(compareModeOn ? (isSelectedForCompare ? ", selected for compare" : ", not selected") : "")")
+        .accessibilityLabel("\(team.city) \(team.name), \(preview.lastSeasonRecord), \(preview.situation), roster \(preview.estimatedOVR) OVR, difficulty \(preview.difficulty) of 5, QB \(preview.startingQBName) \(preview.startingQBOverall) OVR, \(preview.ownerPatience) owner, \(preview.patienceSeasons) seasons\(matchesDeclaredStyle ? ", run on your coaching style" : "")\(preview.isLocked ? ", locked" : "")\(compareModeOn ? (isSelectedForCompare ? ", selected for compare" : ", not selected") : "")")
     }
 }
 
@@ -1357,6 +1382,10 @@ private struct TeamDetailSheet: View {
     let team: LeagueTeamDefinition
     /// The league being browsed — supplies this team's preview and its rivals.
     let catalog: TeamBrowseCatalog
+    /// The style the user declared two screens ago, on NewCareerView's identity
+    /// page. It is the ONLY playstyle preference the career records, so it is
+    /// what a club is matched against here — the player is not asked twice.
+    let coachingStyle: CoachingStyle
     /// R40 — one-line mode + league-settings recap above the confirm button.
     var setupSummary: String = ""
     /// R40 — confirm-button title (fantasy draft changes the next step).
@@ -2055,6 +2084,259 @@ private struct TeamDetailSheet: View {
         .cardBackground()
     }
 
+    // MARK: - Year One
+
+    /// What the first season looks like from this chair — and deliberately NOT
+    /// a projected win total.
+    ///
+    /// Nothing in the engine projects a record before the season is simulated,
+    /// so any figure here would be a formula invented for this one card, and a
+    /// card that disagrees with the sim on the most important screen in the
+    /// game is worse than a card that says less. Every line below is something
+    /// already true of the club: last season as it actually ended, where the
+    /// club says it is, how long the owner will wait, and what there is to
+    /// spend. The closing note says the absence out loud, so it reads as a
+    /// decision rather than as missing data.
+    private var yearOneCard: some View {
+        VStack(alignment: .leading, spacing: DSSpacing.xs) {
+            sectionLabel(String(localized: "Year One"))
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            yearOneRow(
+                label: String(localized: "Last season"),
+                value: preview.lastSeasonPlayoffResult
+                    .map { "\(preview.lastSeasonRecord) \u{00B7} \($0)" }
+                    ?? preview.lastSeasonRecord,
+                tint: .textPrimary
+            )
+            yearOneRow(
+                label: String(localized: "Where the club is"),
+                value: preview.situation,
+                tint: situationColor
+            )
+            yearOneRow(
+                label: String(localized: "Owner"),
+                value: "\(preview.ownerPatience) \u{00B7} \(preview.patienceSeasons) season\(preview.patienceSeasons == 1 ? "" : "s")",
+                tint: ownerPatienceColor
+            )
+            yearOneRow(
+                label: String(localized: "Cap space"),
+                value: "$\(preview.estimatedCapSpace)M",
+                tint: preview.estimatedCapSpace > 30 ? .success : preview.estimatedCapSpace > 15 ? .accentBlue : .warning
+            )
+
+            DSDetailNote(
+                text: String(localized: "Four facts, no forecast. Nothing on this card projects a record — the game does not know what this team wins until the season is played."),
+                icon: "calendar"
+            )
+        }
+        .padding(DSSpacing.md)
+        .frame(maxWidth: .infinity)
+        .cardBackground()
+    }
+
+    private func yearOneRow(label: String, value: String, tint: Color) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: DSSpacing.xs) {
+            Text(label)
+                .font(DSType.text(DSType.Size.caption, .medium))
+                .foregroundStyle(Color.textTertiary)
+            Spacer(minLength: DSSpacing.xxs)
+            Text(value)
+                .font(DSType.display(DSType.Size.footnote, .bold))
+                .foregroundStyle(tint)
+                .multilineTextAlignment(.trailing)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(label), \(value)")
+    }
+
+    // MARK: - Franchise Prestige
+
+    /// What the badge carries before a down is played.
+    ///
+    /// A word and five pips, NOT a second star row: career difficulty already
+    /// spends five stars further up the sheet and two five-of-something scales
+    /// on one screen are read as the same scale. One tint for every tier for
+    /// the same reason the difficulty stars are monochrome — prestige is not a
+    /// good/bad axis, and the low tiers say so in as many words.
+    private var franchisePrestigeCard: some View {
+        VStack(spacing: DSSpacing.xs) {
+            sectionLabel(String(localized: "Franchise Prestige"))
+
+            Text(preview.prestigeLabel)
+                .font(DSType.display(DSType.Size.title3, .black))
+                .foregroundStyle(Color.accentGold)
+
+            HStack(spacing: DSSpacing.xxs) {
+                ForEach(1...5, id: \.self) { pip in
+                    Image(systemName: pip <= preview.prestige ? "circle.fill" : "circle")
+                        .font(.system(size: DSType.Size.micro))
+                        .foregroundStyle(pip <= preview.prestige
+                                         ? Color.accentGold
+                                         : Color.textTertiary.opacity(0.4))
+                }
+            }
+
+            Text(preview.prestigeDetail)
+                .font(DSType.text(DSType.Size.caption, .regular, prose: true))
+                .foregroundStyle(Color.textSecondary)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+
+            DSDetailNote(
+                text: String(localized: "Standing, not form: this is the history the badge carries, and no part of the season is simulated from it."),
+                icon: "building.columns"
+            )
+        }
+        .padding(DSSpacing.md)
+        .frame(maxWidth: .infinity)
+        .cardBackground()
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Franchise prestige, \(preview.prestigeLabel), \(preview.prestige) of 5. \(preview.prestigeDetail)")
+    }
+
+    // MARK: - Coaching Style Fit
+
+    /// Whose house this is, against the style the user already declared.
+    ///
+    /// No second question is asked: `CoachingStyle` is the one playstyle the
+    /// career records, so it is what the club is matched on. And no bonus is
+    /// claimed for a match — nothing in the engine reads the pairing, and the
+    /// copy is careful to say the difference costs nothing rather than let the
+    /// player read a hidden penalty into it. What the note quotes instead is
+    /// real: the style's own `+bonusValue bonusAttribute`, and the market read
+    /// `FranchiseIdentityDeclaration.declare` seeds from it the moment this
+    /// sheet is confirmed.
+    private var styleFitCard: some View {
+        let matches = preview.styleFit == coachingStyle
+        return VStack(spacing: DSSpacing.xs) {
+            sectionLabel(String(localized: "Coaching Style"))
+
+            HStack(spacing: DSSpacing.sm) {
+                styleTile(
+                    caption: String(localized: "You declared"),
+                    style: coachingStyle,
+                    tint: .accentBlue
+                )
+                styleTile(
+                    caption: String(localized: "This building runs on"),
+                    style: preview.styleFit,
+                    tint: matches ? .success : .textSecondary
+                )
+            }
+
+            Text(matches
+                 ? String(localized: "SAME SCHOOL")
+                 : String(localized: "A DIFFERENT SCHOOL"))
+                .font(DSType.display(DSType.Size.caption, .heavy))
+                .tracking(1.0)
+                .foregroundStyle(matches ? Color.success : Color.textSecondary)
+                .padding(.horizontal, DSSpacing.xs)
+                .padding(.vertical, DSSpacing.xxs)
+                .background(
+                    Capsule().fill((matches ? Color.success : Color.textSecondary).opacity(0.15))
+                )
+
+            Text(matches
+                 ? String(localized: "The way this club has been run is the way you say you run one.")
+                 : String(localized: "This club has been run another way. Nothing stops you changing that, and nothing is docked for the difference."))
+                .font(DSType.text(DSType.Size.caption, .regular, prose: true))
+                .foregroundStyle(Color.textSecondary)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+
+            DSDetailNote(
+                text: "Your style is worth +\(coachingStyle.bonusValue) \(coachingStyle.bonusAttribute) wherever you go, and it is the read the other 31 front offices price you against until your own trades change their minds.",
+                icon: coachingStyle.icon
+            )
+        }
+        .padding(DSSpacing.md)
+        .frame(maxWidth: .infinity)
+        .cardBackground()
+    }
+
+    private func styleTile(caption: String, style: CoachingStyle, tint: Color) -> some View {
+        VStack(spacing: DSSpacing.xxs) {
+            Text(caption)
+                .font(DSType.display(DSType.Size.micro, .semibold))
+                .foregroundStyle(Color.textTertiary)
+                .multilineTextAlignment(.center)
+            Image(systemName: style.icon)
+                .font(.system(size: DSType.Size.body))
+                .foregroundStyle(tint)
+            Text(style.displayName)
+                .font(DSType.display(DSType.Size.caption, .bold))
+                .foregroundStyle(tint)
+                .multilineTextAlignment(.center)
+                .lineLimit(2)
+                .minimumScaleFactor(0.8)
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    // MARK: - Installed Scheme
+
+    /// The two systems this club actually installs.
+    ///
+    /// Stated only because both league sources now really know them: the fixed
+    /// template carries `staff.offScheme`/`defScheme` per club, and the random
+    /// league stopped drawing them with `allCases.randomElement()` — the pair
+    /// is authored in `LeagueTeamData` and `LeagueGenerator.generate` hires the
+    /// head coach and both coordinators under it and builds the roster to the
+    /// defence. Before that, nothing here could be said at all, which is why
+    /// the card is guarded rather than defaulted: a source that states no
+    /// scheme gets no card.
+    @ViewBuilder
+    private var installedSchemeCard: some View {
+        if let offense = preview.offensiveScheme, let defense = preview.defensiveScheme {
+            VStack(spacing: DSSpacing.xs) {
+                sectionLabel(String(localized: "Installed Scheme"))
+
+                HStack(spacing: DSSpacing.sm) {
+                    schemeTile(
+                        icon: "arrow.up.forward",
+                        caption: String(localized: "Offense"),
+                        name: offense.displayName
+                    )
+                    schemeTile(
+                        icon: "shield.lefthalf.filled",
+                        caption: String(localized: "Defense"),
+                        name: defense.displayName
+                    )
+                }
+
+                DSDetailNote(
+                    text: rosterPromisesHold
+                        ? String(localized: "The rooms in Roster Shape are graded under this club's own front — a 3-4 fields one nose tackle where a 4-3 fields two — and the FIT column on your roster screen rates every player against these two systems.")
+                        : String(localized: "The staff is not part of a fantasy draft, so this is still the system the club installs for whoever you draft."),
+                    icon: "list.clipboard"
+                )
+            }
+            .padding(DSSpacing.md)
+            .frame(maxWidth: .infinity)
+            .cardBackground()
+        }
+    }
+
+    private func schemeTile(icon: String, caption: String, name: String) -> some View {
+        VStack(spacing: DSSpacing.xxs) {
+            HStack(spacing: DSSpacing.xxs) {
+                Image(systemName: icon)
+                    .font(.system(size: DSType.Size.caption))
+                    .foregroundStyle(Color.textTertiary)
+                Text(caption)
+                    .font(DSType.display(DSType.Size.caption, .semibold))
+                    .foregroundStyle(Color.textTertiary)
+            }
+            Text(name)
+                .font(DSType.display(DSType.Size.body, .black))
+                .foregroundStyle(Color.textPrimary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+        }
+        .frame(maxWidth: .infinity)
+    }
+
     // MARK: - Locked Team Banner
 
     @ViewBuilder
@@ -2092,8 +2374,14 @@ private struct TeamDetailSheet: View {
             // Franchise vitals promoted directly under the header — the three
             // most decision-critical numbers read first (audit).
             statsRow
+            // What the first season is, stated in facts, directly under the
+            // numbers it recaps.
+            yearOneCard
             rosterPromiseCards
+            installedSchemeCard
+            styleFitCard
             ownerExpectationsCard
+            franchisePrestigeCard
             marketMediaCard
             coachingBudgetCard
             divisionRivalsCard
@@ -2116,8 +2404,12 @@ private struct TeamDetailSheet: View {
             LazyVGrid(columns: columns, spacing: 12) {
                 // Franchise vitals first — most decision-critical numbers (audit).
                 statsRow
+                yearOneCard
                 rosterPromiseCards
+                installedSchemeCard
+                styleFitCard
                 ownerExpectationsCard
+                franchisePrestigeCard
                 marketMediaCard
                 coachingBudgetCard
                 divisionRivalsCard
