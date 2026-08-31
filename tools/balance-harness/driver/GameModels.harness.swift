@@ -38,6 +38,12 @@ enum CoachRole {
     case lbCoach
     case dbCoach
     case strengthCoach
+    /// Medical staff. `LiveGameEngine` looks both up in its init to shape the
+    /// live injury roll (`rollInjuries`) exactly as the weekly sim's
+    /// doctor/physio lookup does, so the `coachedgame` scenario needs the two
+    /// cases to exist even when it fields no medical staff at all.
+    case teamDoctor
+    case physio
     case other
 }
 
@@ -54,6 +60,12 @@ final class Coach {
 
     /// Phase 4 face library (written by the synced `CoachingEngine`).
     var faceID: String? = nil
+
+    /// Display name halves. `LiveGameEngine.coordShortName` builds the "S. McVay"
+    /// label on the coordinator recommendation bubble out of them. Presentation
+    /// only — no synced engine reads either one for a number.
+    var firstName: String = "Harness"
+    var lastName: String = "Coach"
 
     /// `"male"` | `"female"` — mirrors `Coach.gender` in the app so the synced
     /// `CoachingEngine` compiles here. The harness never reads it; portraits do
@@ -323,9 +335,14 @@ final class Team {
     let id: UUID
     var players: [Player]
     var currentCapUsage: Int = 0
-    init(id: UUID = UUID(), players: [Player]) {
+    /// Three-letter club tag. `LiveGameEngine` keeps the opponent's for its
+    /// broadcast intel lines ("CHI is keying on the inside run") — presentation
+    /// only; nothing synced reads it for a number.
+    var abbreviation: String = "HAR"
+    init(id: UUID = UUID(), players: [Player], abbreviation: String = "HAR") {
         self.id = id
         self.players = players
+        self.abbreviation = abbreviation
     }
 
     /// Mirror of the shipped `Team.currentRoster()`. The shipped version fetches
