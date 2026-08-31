@@ -1033,15 +1033,28 @@ enum CoachingEngine {
     /// that carry a pronoun (or other gendered wording, e.g. "father figure").
     ///
     /// DETERMINISM CONTRACT — read before touching any call site:
-    /// every `male:` array below is byte-identical to the single array it
-    /// replaced, and `male` and `female` always have the SAME element count, so
-    /// the `randomElement(using:)` draw that follows consumes exactly one value
-    /// from exactly the same distribution as before this function existed. The
-    /// fixed-league template's staff are male by construction (they anonymize
-    /// real male coaches) and `LeagueGenerator` replays their blurbs from a
-    /// seeded stream, so their text must not move by a single byte. Never edit a
-    /// `male:` array's contents, never change either array's length, and never
-    /// add or remove a draw.
+    ///
+    /// **Permanent:** `male` and `female` must always have the SAME element
+    /// count, so the `randomElement(using:)` draw that follows consumes one
+    /// value from the same distribution whichever pool it lands on. A coach's
+    /// gender must never move his stream position; the `assert` below enforces
+    /// it, and a new line always goes into BOTH arrays.
+    ///
+    /// **No longer frozen:** a pool's *length*. It was held fixed on the belief
+    /// that the fixed 2026 template stores its staff blurbs. It does not — a
+    /// `LeagueTemplate.StaffMember` carries a name, a tenure year, a scheme
+    /// identity and a portrait id, and nothing else, so
+    /// `LeagueTemplateImporter.makeStaff` regenerates every blurb from a
+    /// per-role seeded stream on each import. Widening a pool therefore rewrites
+    /// those blurbs and shifts the one draw that follows them on that stream
+    /// (`generateCoach`'s `contractYearsRemaining`); it moves not one byte of
+    /// the baked file, and `make_templates.py` gate 19 measures that. The owner
+    /// accepted that re-baseline on 2026-08-31, to fix duplicate openers on a
+    /// 26-man candidate board.
+    ///
+    /// The draw that genuinely must not move is `generateCoach`'s FIRST — the
+    /// age, which `make_templates.py::template_coach_age` replays to pick a
+    /// template coach's portrait. It sits far ahead of anything in this file.
     private static func genderedPhrases(
         male: [String], female: [String], for coach: Coach
     ) -> [String] {
@@ -1057,7 +1070,15 @@ enum CoachingEngine {
     ) -> String {
         var parts: [String] = []
 
-        // Experience-based opening
+        // Experience-based opening.
+        //
+        // Twelve variants per tier, not four. Four was a guaranteed duplicate:
+        // a coordinator search puts 26 candidates on one board, they cluster
+        // into two or three of these tiers, and by pigeonhole several men opened
+        // with the same sentence every single time. The only figure any line
+        // states is `coach.yearsExperience`, which `generateCoach` computes as
+        // `age - Int.random(in: 28...40)`; nothing here invents a win total, a
+        // title count or a job history the game does not model.
         let expOpeners: [String]
         switch coach.yearsExperience {
         case 0...5:
@@ -1066,13 +1087,29 @@ enum CoachingEngine {
                     "A rising talent with \(coach.yearsExperience) years in the league.",
                     "Young and hungry, still building his coaching resume.",
                     "Fresh face on the coaching circuit with raw potential.",
-                    "Recently transitioned from a quality control role."
+                    "Recently transitioned from a quality control role.",
+                    "Came up through the analytics department and never left the building.",
+                    "Cut his teeth as an assistant before getting this look.",
+                    "A former position coach the league has started to notice.",
+                    "Only \(coach.yearsExperience) years in, and already running his own install.",
+                    "Made the jump from the college ranks not long ago.",
+                    "Learned the job under a veteran staff and kept the notes.",
+                    "Started out breaking down film and worked up from there.",
+                    "Untested at this level, but the interview room came away impressed."
                 ],
                 female: [
                     "A rising talent with \(coach.yearsExperience) years in the league.",
                     "Young and hungry, still building her coaching resume.",
                     "Fresh face on the coaching circuit with raw potential.",
-                    "Recently transitioned from a quality control role."
+                    "Recently transitioned from a quality control role.",
+                    "Came up through the analytics department and never left the building.",
+                    "Cut her teeth as an assistant before getting this look.",
+                    "A former position coach the league has started to notice.",
+                    "Only \(coach.yearsExperience) years in, and already running her own install.",
+                    "Made the jump from the college ranks not long ago.",
+                    "Learned the job under a veteran staff and kept the notes.",
+                    "Started out breaking down film and worked up from there.",
+                    "Untested at this level, but the interview room came away impressed."
                 ],
                 for: coach
             )
@@ -1082,13 +1119,29 @@ enum CoachingEngine {
                     "Spent \(coach.yearsExperience) years climbing the coaching ladder.",
                     "A mid-career coach with a growing reputation around the league.",
                     "Has been steadily building his resume over \(coach.yearsExperience) seasons.",
-                    "Proven himself as a reliable coordinator over the past decade."
+                    "Proven himself as a reliable coordinator over the past decade.",
+                    "\(coach.yearsExperience) seasons in, and squarely in the prime of his career.",
+                    "Interviews for head-coaching jobs most hiring cycles.",
+                    "A name that comes up every cycle without landing yet.",
+                    "Built a reputation on rebuilds nobody else wanted.",
+                    "Regarded around the league as ready for a bigger chair.",
+                    "Has worked under several head coaches in \(coach.yearsExperience) seasons.",
+                    "Left a comfortable job for a harder one, on purpose.",
+                    "Long enough in one building to have shaped how it drafts."
                 ],
                 female: [
                     "Spent \(coach.yearsExperience) years climbing the coaching ladder.",
                     "A mid-career coach with a growing reputation around the league.",
                     "Has been steadily building her resume over \(coach.yearsExperience) seasons.",
-                    "Proven herself as a reliable coordinator over the past decade."
+                    "Proven herself as a reliable coordinator over the past decade.",
+                    "\(coach.yearsExperience) seasons in, and squarely in the prime of her career.",
+                    "Interviews for head-coaching jobs most hiring cycles.",
+                    "A name that comes up every cycle without landing yet.",
+                    "Built a reputation on rebuilds nobody else wanted.",
+                    "Regarded around the league as ready for a bigger chair.",
+                    "Has worked under several head coaches in \(coach.yearsExperience) seasons.",
+                    "Left a comfortable job for a harder one, on purpose.",
+                    "Long enough in one building to have shaped how it drafts."
                 ],
                 for: coach
             )
@@ -1098,13 +1151,29 @@ enum CoachingEngine {
                     "A seasoned veteran with \(coach.yearsExperience) years of League experience.",
                     "Well-respected throughout the league after nearly two decades of coaching.",
                     "One of the more experienced coaches available, with \(coach.yearsExperience) years under his belt.",
-                    "A veteran presence who has seen it all in his \(coach.yearsExperience)-year career."
+                    "A veteran presence who has seen it all in his \(coach.yearsExperience)-year career.",
+                    "\(coach.yearsExperience) seasons of tape, and a system he has never had to borrow.",
+                    "Has been in this league longer than most of the front office.",
+                    "\(coach.yearsExperience) years of hard-earned scar tissue, and a system to show for it.",
+                    "The kind of hire owners make when they are done experimenting.",
+                    "Has coached in a lot of cities and kept the same core beliefs.",
+                    "A known quantity after \(coach.yearsExperience) years — for better and for worse.",
+                    "Long past proving anything; now he is choosing his spots.",
+                    "Carries \(coach.yearsExperience) years of institutional memory into every meeting."
                 ],
                 female: [
                     "A seasoned veteran with \(coach.yearsExperience) years of League experience.",
                     "Well-respected throughout the league after nearly two decades of coaching.",
                     "One of the more experienced coaches available, with \(coach.yearsExperience) years under her belt.",
-                    "A veteran presence who has seen it all in her \(coach.yearsExperience)-year career."
+                    "A veteran presence who has seen it all in her \(coach.yearsExperience)-year career.",
+                    "\(coach.yearsExperience) seasons of tape, and a system she has never had to borrow.",
+                    "Has been in this league longer than most of the front office.",
+                    "\(coach.yearsExperience) years of hard-earned scar tissue, and a system to show for it.",
+                    "The kind of hire owners make when they are done experimenting.",
+                    "Has coached in a lot of cities and kept the same core beliefs.",
+                    "A known quantity after \(coach.yearsExperience) years — for better and for worse.",
+                    "Long past proving anything; now she is choosing her spots.",
+                    "Carries \(coach.yearsExperience) years of institutional memory into every meeting."
                 ],
                 for: coach
             )
@@ -1114,13 +1183,29 @@ enum CoachingEngine {
                     "A grizzled coaching lifer with \(coach.yearsExperience) years in the business.",
                     "Has been coaching longer than some of his players have been alive.",
                     "An old-school football mind with over two decades of experience.",
-                    "One of the longest-tenured coaches in professional football."
+                    "One of the longest-tenured coaches in professional football.",
+                    "\(coach.yearsExperience) years in, and still the first car in the parking lot.",
+                    "Has seen ownership change hands and kept his office.",
+                    "A coaching institution — his tree runs through half the league.",
+                    "Has forgotten more football than most staffs collectively know.",
+                    "\(coach.yearsExperience) seasons, and he still installs the base package himself.",
+                    "The dean of the profession, whether or not he would claim the title.",
+                    "Past the point where anyone bothers counting his seasons.",
+                    "Retirement gets rumored every offseason and never happens."
                 ],
                 female: [
                     "A grizzled coaching lifer with \(coach.yearsExperience) years in the business.",
                     "Has been coaching longer than some of her players have been alive.",
                     "An old-school football mind with over two decades of experience.",
-                    "One of the longest-tenured coaches in professional football."
+                    "One of the longest-tenured coaches in professional football.",
+                    "\(coach.yearsExperience) years in, and still the first car in the parking lot.",
+                    "Has seen ownership change hands and kept her office.",
+                    "A coaching institution — her tree runs through half the league.",
+                    "Has forgotten more football than most staffs collectively know.",
+                    "\(coach.yearsExperience) seasons, and she still installs the base package herself.",
+                    "The dean of the profession, whether or not she would claim the title.",
+                    "Past the point where anyone bothers counting her seasons.",
+                    "Retirement gets rumored every offseason and never happens."
                 ],
                 for: coach
             )
@@ -1149,12 +1234,18 @@ enum CoachingEngine {
                     male: [
                         "Known for creative play-calling that keeps defenses guessing.",
                         "His game-day play-calling is considered among the best in the league.",
-                        "Offensive coordinators around the league study his play sheets."
+                        "Offensive coordinators around the league study his play sheets.",
+                        "Will call a fourth-down shot in the first quarter if the look is there.",
+                        "His third-down menu is the part opponents spend the week on.",
+                        "Sequences a drive like the answer was set up two calls ago."
                     ],
                     female: [
                         "Known for creative play-calling that keeps defenses guessing.",
                         "Her game-day play-calling is considered among the best in the league.",
-                        "Offensive coordinators around the league study her play sheets."
+                        "Offensive coordinators around the league study her play sheets.",
+                        "Will call a fourth-down shot in the first quarter if the look is there.",
+                        "Her third-down menu is the part opponents spend the week on.",
+                        "Sequences a drive like the answer was set up two calls ago."
                     ],
                     for: coach
                 )
@@ -1163,12 +1254,18 @@ enum CoachingEngine {
                     male: [
                         "Known for developing raw talent into starters.",
                         "Has a track record of turning late-round picks into All-Stars.",
-                        "Players who work under him consistently improve year over year."
+                        "Players who work under him consistently improve year over year.",
+                        "Former backups of his are starting elsewhere in the league.",
+                        "Believes a draft pick is made in year three, not on draft night.",
+                        "Position rooms under him get better in-season, not just in camp."
                     ],
                     female: [
                         "Known for developing raw talent into starters.",
                         "Has a track record of turning late-round picks into All-Stars.",
-                        "Players who work under her consistently improve year over year."
+                        "Players who work under her consistently improve year over year.",
+                        "Former backups of hers are starting elsewhere in the league.",
+                        "Believes a draft pick is made in year three, not on draft night.",
+                        "Position rooms under her get better in-season, not just in camp."
                     ],
                     for: coach
                 )
@@ -1177,12 +1274,18 @@ enum CoachingEngine {
                     male: [
                         "Meticulous game planner who leaves no stone unturned.",
                         "His game plans are legendary for exploiting opponent weaknesses.",
-                        "Spends 18-hour days during the week perfecting his game plan."
+                        "Spends 18-hour days during the week perfecting his game plan.",
+                        "Builds the week around taking away one thing completely.",
+                        "His Monday install is usually finished before the Sunday flight lands.",
+                        "Opponents rarely see the same front twice in a game he planned."
                     ],
                     female: [
                         "Meticulous game planner who leaves no stone unturned.",
                         "Her game plans are legendary for exploiting opponent weaknesses.",
-                        "Spends 18-hour days during the week perfecting her game plan."
+                        "Spends 18-hour days during the week perfecting her game plan.",
+                        "Builds the week around taking away one thing completely.",
+                        "Her Monday install is usually finished before the Sunday flight lands.",
+                        "Opponents rarely see the same front twice in a game she planned."
                     ],
                     for: coach
                 )
@@ -1191,12 +1294,18 @@ enum CoachingEngine {
                     male: [
                         "Has an exceptional eye for talent that others overlook.",
                         "Former scouts credit him with finding several hidden gems.",
-                        "Known for spending extra hours in the film room evaluating prospects."
+                        "Known for spending extra hours in the film room evaluating prospects.",
+                        "Trusts the tape over the testing numbers, and has been right often.",
+                        "Has a short list of small-school names every single spring.",
+                        "His pre-draft grades tend to age better than the board's."
                     ],
                     female: [
                         "Has an exceptional eye for talent that others overlook.",
                         "Former scouts credit her with finding several hidden gems.",
-                        "Known for spending extra hours in the film room evaluating prospects."
+                        "Known for spending extra hours in the film room evaluating prospects.",
+                        "Trusts the tape over the testing numbers, and has been right often.",
+                        "Has a short list of small-school names every single spring.",
+                        "Her pre-draft grades tend to age better than the board's."
                     ],
                     for: coach
                 )
@@ -1205,12 +1314,18 @@ enum CoachingEngine {
                     male: [
                         "Free agents consistently cite him as a reason they signed.",
                         "His recruiting pitch is considered one of the best in the league.",
-                        "Players want to play for him — it's that simple."
+                        "Players want to play for him — it's that simple.",
+                        "Works the phones in March like the season depends on it.",
+                        "Agents take his calls first, which is worth more than it sounds.",
+                        "Has talked more than one veteran into a discount to stay."
                     ],
                     female: [
                         "Free agents consistently cite her as a reason they signed.",
                         "Her recruiting pitch is considered one of the best in the league.",
-                        "Players want to play for her — it's that simple."
+                        "Players want to play for her — it's that simple.",
+                        "Works the phones in March like the season depends on it.",
+                        "Agents take her calls first, which is worth more than it sounds.",
+                        "Has talked more than one veteran into a discount to stay."
                     ],
                     for: coach
                 )
@@ -1219,12 +1334,18 @@ enum CoachingEngine {
                     male: [
                         "His halftime speeches are the stuff of locker room legend.",
                         "Players run through walls for him on game day.",
-                        "Known for getting the absolute maximum out of his roster."
+                        "Known for getting the absolute maximum out of his roster.",
+                        "Finds the one thing a player will not want to be told twice.",
+                        "His teams do not quit in November, whatever the record says.",
+                        "Turns a losing streak into a grievance the locker room can use."
                     ],
                     female: [
                         "Her halftime speeches are the stuff of locker room legend.",
                         "Players run through walls for her on game day.",
-                        "Known for getting the absolute maximum out of her roster."
+                        "Known for getting the absolute maximum out of her roster.",
+                        "Finds the one thing a player will not want to be told twice.",
+                        "Her teams do not quit in November, whatever the record says.",
+                        "Turns a losing streak into a grievance the locker room can use."
                     ],
                     for: coach
                 )
@@ -1233,12 +1354,18 @@ enum CoachingEngine {
                     male: [
                         "Runs a tight ship — his teams are among the least penalized in the league.",
                         "Demands accountability from every player, coach, and staff member.",
-                        "His attention to detail borders on obsessive, in the best way."
+                        "His attention to detail borders on obsessive, in the best way.",
+                        "Meetings start on his clock, and everyone learns that once.",
+                        "Believes penalties are a coaching statistic, and treats them that way.",
+                        "Sets the standard in week one and does not renegotiate it."
                     ],
                     female: [
                         "Runs a tight ship — her teams are among the least penalized in the league.",
                         "Demands accountability from every player, coach, and staff member.",
-                        "Her attention to detail borders on obsessive, in the best way."
+                        "Her attention to detail borders on obsessive, in the best way.",
+                        "Meetings start on her clock, and everyone learns that once.",
+                        "Believes penalties are a coaching statistic, and treats them that way.",
+                        "Sets the standard in week one and does not renegotiate it."
                     ],
                     for: coach
                 )
@@ -1247,12 +1374,18 @@ enum CoachingEngine {
                     male: [
                         "A natural in front of the cameras who shields his players from distractions.",
                         "His press conferences are masterclasses in saying nothing and everything.",
-                        "The media respects him, and he uses that to protect his locker room."
+                        "The media respects him, and he uses that to protect his locker room.",
+                        "Says nothing quotable and somehow leaves the room liked.",
+                        "Will take the blame publicly and settle it privately.",
+                        "His weekly presser is where a story goes to die."
                     ],
                     female: [
                         "A natural in front of the cameras who shields her players from distractions.",
                         "Her press conferences are masterclasses in saying nothing and everything.",
-                        "The media respects her, and she uses that to protect her locker room."
+                        "The media respects her, and she uses that to protect her locker room.",
+                        "Says nothing quotable and somehow leaves the room liked.",
+                        "Will take the blame publicly and settle it privately.",
+                        "Her weekly presser is where a story goes to die."
                     ],
                     for: coach
                 )
@@ -1261,19 +1394,28 @@ enum CoachingEngine {
                 attrPhrases = [
                     "Has a keen understanding of the salary cap and player value.",
                     "Works closely with the front office on roster construction.",
-                    "Known for identifying value signings in free agency."
+                    "Known for identifying value signings in free agency.",
+                    "Reads a cap sheet the way other coaches read a call sheet.",
+                    "Knows which year of a deal is the one that actually matters.",
+                    "Would rather lose a player a year early than a year late."
                 ]
             case "morale building":
                 attrPhrases = genderedPhrases(
                     male: [
                         "His locker rooms are consistently described as tight-knit families.",
                         "Creates an environment where players genuinely enjoy coming to work.",
-                        "Team chemistry has never been an issue under his leadership."
+                        "Team chemistry has never been an issue under his leadership.",
+                        "Knows every name in the building, including the ones off the roster.",
+                        "His rooms police themselves, which is rather the point.",
+                        "Makes the bottom of the roster feel like part of the roster."
                     ],
                     female: [
                         "Her locker rooms are consistently described as tight-knit families.",
                         "Creates an environment where players genuinely enjoy coming to work.",
-                        "Team chemistry has never been an issue under her leadership."
+                        "Team chemistry has never been an issue under her leadership.",
+                        "Knows every name in the building, including the ones off the roster.",
+                        "Her rooms police themselves, which is rather the point.",
+                        "Makes the bottom of the roster feel like part of the roster."
                     ],
                     for: coach
                 )

@@ -235,6 +235,19 @@ nonisolated struct LeagueTemplate: Codable {
         /// phase 4, which `FaceLibrary.backfill` then fills in.
         var faceID: String?
 
+        /// Years left on this man's deal when the career opens.
+        ///
+        /// Baked by the transform rather than left to the import because a
+        /// template row is read in places no import has happened yet — the
+        /// pre-career team picker being the one that matters, which could not
+        /// tell a prospective club's expiring stars from its signed ones.
+        /// `make_templates.py::template_contract_years` replays the importer's
+        /// OWN contract sub-stream to produce it, so this is the same number
+        /// `LeagueGenerator.realisticContractYears` hands the player at import,
+        /// not a second opinion. `nil` only for a template baked before this
+        /// field existed, in which case the importer's draw stands alone.
+        var contractYears: Int?
+
         /// Overall pick of record for whichever profile this row came from.
         var effectiveDraftPick: Int? { fuzzedPick ?? draftPick }
 

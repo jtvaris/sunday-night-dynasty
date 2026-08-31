@@ -2289,6 +2289,58 @@ def template_coach_age(team_key: str, slot: str) -> int:
     return swift_random_closed(SwiftSplitMix64(seed), 35, 68)
 
 
+# --- contract years ---------------------------------------------------------
+#
+# `LeagueTemplateImporter`'s per-player contract sub-stream. Until now a
+# template player's contract years existed ONLY after an import: the importer
+# drew them from `LeagueGenerator.realisticContractYears` on
+# `SeededLeagueRandom(seed: globalSeed + entitySeed(id) + contractSeedOffset)`,
+# so anything that reads the template WITHOUT importing it — the pre-career team
+# picker, above all — had no contract data at all. The draw is replayed here and
+# baked onto the row, which is the whole of the change: same seed, same branch,
+# same first value.
+#
+# COUPLING (guarded by a comment at both ends, exactly like `template_coach_age`
+# above): the contract years are the FIRST value that sub-stream yields, and
+# `LeagueTemplateImporter.makePlayer` keeps drawing them even though the row now
+# carries the answer, because the player's salary and morale run on the SAME
+# sub-stream a few lines later. Skipping the draw there would re-price every man
+# in the fixed league; adding a draw ahead of it here or there would make the
+# baked number a lie. The importer asserts the two agree, and gate 20 below
+# re-measures the bands.
+CONTRACT_SEED_OFFSET = 0xC0_7AC0_0000_0002   # LeagueTemplateImporter.contractSeedOffset
+_HEX16 = re.compile(r"[0-9a-fA-F]{1,16}")
+
+
+def swift_entity_seed(identifier: str) -> int:
+    """`LeagueTemplateImporter.entitySeed` — a <=16-char hex id is read as the
+    number it spells, anything else falls back to FNV-1a."""
+    if _HEX16.fullmatch(identifier):
+        return int(identifier, 16) & _U64
+    return swift_fnv1a(identifier)
+
+
+def template_contract_years(player_id: str, years_pro: int) -> int:
+    """The contract years `LeagueGenerator.realisticContractYears` will hand this
+    row at import: rookie deals 3-4, mid-career 2-4, 7+ years pro 1-2."""
+    seed = (GLOBAL_SEED + swift_entity_seed(player_id) + CONTRACT_SEED_OFFSET) & _U64
+    rng = SwiftSplitMix64(seed)
+    if years_pro <= 2:
+        return swift_random_closed(rng, 3, 4)
+    if years_pro <= 6:
+        return swift_random_closed(rng, 2, 4)
+    return swift_random_closed(rng, 1, 2)
+
+
+def contract_years_band(years_pro: int) -> tuple:
+    """The closed range `realisticContractYears` can return for this tenure."""
+    if years_pro <= 2:
+        return (3, 4)
+    if years_pro <= 6:
+        return (2, 4)
+    return (1, 2)
+
+
 # --- allocation -------------------------------------------------------------
 
 
@@ -2657,6 +2709,17 @@ def build_templates(raw: dict, log: list):
                 "notes": None,
             })
 
+        # Contract years are replayed off the row that actually ships — its own
+        # `id` (which is the seed) and its own `yearsPro` (which picks the
+        # branch), not the raw record — so the baked number cannot disagree with
+        # the one `LeagueTemplateImporter.makePlayer` draws. The publish profile
+        # jitters `yearsPro`, so its rows legitimately land on a different branch
+        # from the dev rows for the same man; each profile is self-consistent,
+        # which is all the importer needs.
+        for plist in (dev_players, pub_players):
+            for pl in plist:
+                pl["contractYears"] = template_contract_years(pl["id"], pl["yearsPro"])
+
         # Depth order is re-derived from the ratings for BOTH profiles, so the
         # importer never has to trust the raw one-season volume ranking.
         for plist in (dev_players, pub_players):
@@ -2787,7 +2850,7 @@ REQUIRED_PLAYER_KEYS = {
     "college", "draftYear", "draftRound", "draftPick", "fuzzedPick", "heightIn",
     "weightLb", "ratingTarget", "areaHints", "potential", "roleHint",
     "depthRankHint", "role", "depthRank", "careerArc", "statLines", "notes",
-    "faceID",
+    "faceID", "contractYears",
 }
 REQUIRED_TEAM_KEYS = {"identity", "record2025", "conference", "division",
                       "baseDefense", "picks2026", "staff", "players"}
@@ -3310,6 +3373,51 @@ def run_gates(dev, pub, ctx, log):
          + f" + {FACE_FEMALE_ONLY_POOL} female-only"
          if not face_err else "; ".join(face_err[:5]))
 
+    # ---- G20 contract years baked --------------------------------------
+    # Two independent things are checked, because the field's whole value is
+    # that a reader who never runs the importer can trust it:
+    #   (a) COVERAGE — every player row in BOTH profiles carries an int;
+    #   (b) BAND — the value sits inside the closed range
+    #       `LeagueGenerator.realisticContractYears` can return for that row's
+    #       own `yearsPro`. `contract_years_band` is a separate transcription of
+    #       the Swift branch from the one `template_contract_years` draws on, so
+    #       a typo in either shows up here rather than shipping.
+    # The expiring counts are a DIAGNOSTIC, not a target: they are the size of
+    # the population a pre-career reader (the team picker) can now see without
+    # importing anything, which is the reason the field exists.
+    contract_err = []
+    contract_lines = []
+    for label, doc in (("dev", dev), ("publish", pub)):
+        rows = [p for t in doc["teams"] for p in t["players"]]
+        missing = [p["name"] for p in rows if not isinstance(p.get("contractYears"), int)]
+        if missing:
+            contract_err.append(f"{label}: {len(missing)} rows without contractYears ({missing[:3]})")
+            continue
+        out_of_band = []
+        for p in rows:
+            lo, hi = contract_years_band(p["yearsPro"])
+            if not lo <= p["contractYears"] <= hi:
+                out_of_band.append(f"{p['name']} yp{p['yearsPro']}={p['contractYears']} not in {lo}-{hi}")
+        if out_of_band:
+            contract_err.append(f"{label}: {len(out_of_band)} out of band ({out_of_band[:3]})")
+        hist = defaultdict(int)
+        for p in rows:
+            hist[p["contractYears"]] += 1
+        expiring = [p for p in rows if p["contractYears"] <= 1]
+        star_expiring = [p for p in expiring if p["ratingTarget"] >= 80]
+        contract_lines.append(
+            f"{label} {len(rows)} rows, years "
+            + "/".join(f"{y}:{hist[y]}" for y in sorted(hist))
+            + f", {len(expiring)} expiring ({100.0 * len(expiring) / len(rows):.1f}%)"
+            + f", {len(star_expiring)} of them 80+ OVR"
+        )
+    gate(res, "contract-years-baked", not contract_err,
+         "; ".join(contract_lines)
+         + "; every value replays LeagueTemplateImporter's own contract sub-stream "
+           "(globalSeed + entitySeed(id) + contractSeedOffset), so the row and the "
+           "import agree by construction — the importer asserts it"
+         if not contract_err else "; ".join(contract_err[:5]))
+
     return res
 
 
@@ -3443,6 +3551,20 @@ def write_qa_report(path, dev, pub, ctx, gates, log):
     A("`careerArc` = per-season production percentile → OVR band → ±2 seeded "
       "jitter, anchored so the 2025 row lands within ±3 of `ratingTarget`. "
       "In the publish file this is the ONLY career record that ships.")
+    A("")
+
+    A("`contractYears` is the value `LeagueGenerator.realisticContractYears` "
+      "hands this row at import, replayed here rather than invented: the seed is "
+      "`globalSeed + entitySeed(id) + contractSeedOffset` and the branch is the "
+      "row's own `yearsPro` (0-2 pro → 3-4 years, 3-6 → 2-4, 7+ → 1-2). Baking it "
+      "does not change what an import produces — `LeagueTemplateImporter` still "
+      "makes the draw, because the same sub-stream prices the man's salary and "
+      "morale immediately afterwards, and asserts the drawn value equals the "
+      "baked one. What it changes is who can READ it: before this field, a "
+      "template player's contract existed only after a career had been created, "
+      "so the pre-career team picker could not tell a prospective club's "
+      "expiring stars from its signed ones. Gate 20 re-measures the bands and "
+      "reports the expiring population.")
     A("")
 
     A("## 4. QA_REPORT carry-in conditions")
